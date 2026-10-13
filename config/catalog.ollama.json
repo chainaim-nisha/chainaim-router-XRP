@@ -19,6 +19,15 @@
       "deployments": [
         { "id": "qwen-1.5b@ollama", "adapter": "openai", "baseUrl": "http://127.0.0.1:11434/v1", "servedModel": "qwen2.5:1.5b-instruct" }
       ]
+    },
+    {
+      "id": "local/deepseek-r1-1.5b",
+      "zone": "local",
+      "capabilities": { "contextWindow": 4096, "maxOutputTokens": 2048, "supportsTools": false, "supportsVision": false },
+      "pricing": { "inputPerM": 0.06, "outputPerM": 0.12 },
+      "deployments": [
+        { "id": "deepseek-r1@ollama", "adapter": "openai", "baseUrl": "http://127.0.0.1:11434/v1", "servedModel": "Beelzebub4883/deepseek-r1-1.5b:latest" }
+      ]
     }
   ],
   "agentic": {

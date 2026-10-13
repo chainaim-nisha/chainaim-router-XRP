@@ -17,3 +17,5 @@ test-console/local-gateway-key.txt
 
 # Vercel build output and local project link (services/web)
 .vercel/
+.claude/settings.local.json
+.claude/
