@@ -22,8 +22,11 @@
  *                       (default "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com")
  *
  *   --data-config PATH  data folders the page may browse and read (default ../../config/data-sources.json):
- *                       allowedRoots, defaultFolder, defaultMode (whole|pick), extensions, maxBytes, exclude, maxFiles.
- *                       Re-read on every call.
+ *                       allowedRoots, defaultFolder, defaultMode (whole|pick), extensions, maxBytes, exclude, maxFiles,
+ *                       hideFolders (folder-name patterns never listed; default ["_*"], which hides the analyst's
+ *                       work folder). Re-read on every call.
+ *   --analyst URL       the analyst for "03 Private chat + analysis" (default http://127.0.0.1:8740; services/analyst,
+ *                       started by start-analyst.cmd). Only its known routes are forwarded, as JSON.
  *
  *   Pages are served at /view/<id> with a sandbox Content-Security-Policy: their scripts run in an opaque
  *   origin and connect-src is 'none', so model-written HTML cannot call this console, the gateway or any
@@ -52,6 +55,7 @@ const { values: flags } = parseArgs({
     paywall: { type: "string", default: "http://127.0.0.1:8080" },
     spy: { type: "string", default: "http://127.0.0.1:5004" },
     "data-config": { type: "string", default: fileURLToPath(new URL("../../config/data-sources.json", import.meta.url)) },
+    analyst: { type: "string", default: "http://127.0.0.1:8740" },
     "view-max": { type: "string", default: "20" },
     "view-ttl-min": { type: "string", default: "60" },
     "view-max-bytes": { type: "string", default: "1000000" },
@@ -70,7 +74,7 @@ const VIEW_SOURCES = flags["view-script-src"]!.split(/\s+/).filter(Boolean);
 for (const s of VIEW_SOURCES) {
   if (!URL.canParse(s) || new URL(s).protocol !== "https:" || new URL(s).origin !== s.replace(/\/+$/, "")) throw new Error(`--view-script-src entries must be https origins like https://cdn.jsdelivr.net, got ${s}`);
 }
-for (const name of ["gateway", "paywall", "spy"] as const) {
+for (const name of ["gateway", "paywall", "spy", "analyst"] as const) {
   if (!URL.canParse(flags[name]!)) throw new Error(`--${name} must be a URL, got ${flags[name]}`);
 }
 const PORT = Number(flags.port);
@@ -103,6 +107,8 @@ const PAYWALL = flags.paywall!.replace(/\/+$/, "");
 const SPY = flags.spy!.replace(/\/+$/, "");
 const PAGE = new URL("./index.html", import.meta.url);
 
+const ANALYST = flags.analyst!.replace(/\/+$/, "");
+const ANALYST_ROUTES = new Set(["profile", "recipe", "analyze", "status", "evidence", "verify"]);
 const ROUTES: Record<string, string> = { scan: "/v1/privacy/scan", mask: "/v1/privacy/mask", chat: "/v1/chat/completions" };
 
 // "Open page" links: HTML pages found in model answers, kept in memory only, served sandboxed.
@@ -129,7 +135,7 @@ const viewHeaders = { "content-security-policy": VIEW_CSP, "x-content-type-optio
 // ---- From data folder ------------------------------------------------------------------------------
 // The page only NAMES a folder or file; this server decides. Only paths inside allowedRoots (the data config, re-read on
 // every call so edits need no restart) are listed or read, after resolving links. Read-only; nothing is created.
-type DataConfig = { allowedRoots: string[]; defaultFolder: string; extensions: string[]; maxBytes: Record<string, number>; exclude: RegExp[]; excludeText: string[]; maxFiles: number; defaultMode: "whole" | "pick" };
+type DataConfig = { allowedRoots: string[]; defaultFolder: string; extensions: string[]; maxBytes: Record<string, number>; exclude: RegExp[]; excludeText: string[]; maxFiles: number; defaultMode: "whole" | "pick"; hideFolders: RegExp[] };
 const fold = (p: string): string => (process.platform === "win32" ? p.toLowerCase() : p);
 function within(child: string, root: string): boolean {
   const r = relative(fold(root), fold(child));
@@ -155,7 +161,8 @@ function readDataConfig(): { config?: DataConfig; error?: string } {
   const excludeText: string[] = Array.isArray(raw.exclude) ? raw.exclude.map(String) : [];
   const maxFiles = Number.isInteger(raw.maxFiles) && raw.maxFiles > 0 ? raw.maxFiles : 500;
   const defaultMode = raw.defaultMode === "pick" ? "pick" : "whole"; // whole: every file in the folder goes with each question
-  return { config: { allowedRoots: roots, defaultFolder, extensions, maxBytes, exclude: excludeText.map(globToRe), excludeText, maxFiles, defaultMode } };
+  const hideFolders = (Array.isArray(raw.hideFolders) ? raw.hideFolders.map(String) : ["_*"]).map(globToRe); // e.g. the analyst's _analyst work folder
+  return { config: { allowedRoots: roots, defaultFolder, extensions, maxBytes, exclude: excludeText.map(globToRe), excludeText, maxFiles, defaultMode, hideFolders } };
 }
 class DataError extends Error {
   status: number;
@@ -288,7 +295,7 @@ createServer(async (req, res) => {
           const dir = await insideRoots(p, config);
           if (!(await isFolder(dir))) throw new DataError(400, "not a folder");
           const folders = (await readdir(dir, { withFileTypes: true }))
-            .filter((e) => e.isDirectory() && !e.isSymbolicLink())
+            .filter((e) => e.isDirectory() && !e.isSymbolicLink() && !config.hideFolders.some((re) => re.test(e.name)))
             .map((e) => ({ name: e.name, path: join(dir, e.name) }))
             .sort((a, b) => a.name.localeCompare(b.name));
           const up = dirname(dir);
@@ -323,6 +330,22 @@ createServer(async (req, res) => {
         if (e instanceof DataError) return dataJson(res, e.status, { error: e.message });
         throw e;
       }
+    }
+    // 03 Private chat + analysis: forwarded to the analyst (compute only, 127.0.0.1, no model calls). Known routes only, JSON only.
+    if (api === "analyst") {
+      if (!hostOk(req)) return dataJson(res, 403, { error: `open the console as http://127.0.0.1:${PORT}` });
+      const route = name ?? "";
+      if (!(req.method === "GET" ? route === "healthz" : req.method === "POST" && ANALYST_ROUTES.has(route))) return dataJson(res, 404, { error: "unknown analyst route" });
+      if (req.method === "POST" && !/^application\/json\b/i.test(req.headers["content-type"] ?? "")) return dataJson(res, 415, { error: "send application/json" });
+      let r: Response;
+      try {
+        r = await fetch(`${ANALYST}/${route}`, req.method === "POST" ? { method: "POST", headers: { "content-type": "application/json" }, body: await readBody(req) } : {});
+      } catch {
+        return dataJson(res, 503, { error: `the analyst is not running at ${ANALYST}: start test-console\\start-analyst.cmd and keep its window open` });
+      }
+      res.writeHead(r.status, { "content-type": "application/json", ...dataHeaders });
+      res.end(await r.text());
+      return;
     }
     if (api === "leaving") {
       json(res, 200, await (await fetch(SPY)).json());
