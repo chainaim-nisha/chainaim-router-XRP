@@ -14,8 +14,13 @@ packages/route-engine/node_modules/
 
 # local test console: its gateway key stays on this PC
 test-console/local-gateway-key.txt
+# generated from config/local-models.json by scripts/local-models.ts on every switch
+config/generated/
 
 # Vercel build output and local project link (services/web)
 .vercel/
 .claude/settings.local.json
 .claude/
+
+# local data-folder settings for the test console (paths to private data); the example is committed
+config/data-sources.json

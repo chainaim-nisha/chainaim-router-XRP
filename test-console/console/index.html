@@ -100,7 +100,8 @@ nav.rail button[aria-current="true"] { background: var(--sheet); color: var(--in
 .blabel, .label { font: 500 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
 
 textarea { width: 100%; min-height: 96px; resize: vertical; padding: 13px 14px; border: 1px solid var(--rule-firm); border-radius: 3px; background: var(--field); color: var(--ink); font: 400 13.5px/1.7 var(--mono); }
-textarea:focus-visible, button:focus-visible, label.drop:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
+textarea:focus-visible, button:focus-visible, select:focus-visible, label.drop:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
+select { width: 100%; max-width: 32rem; padding: 10px 12px; border: 1px solid var(--rule-firm); border-radius: 3px; background: var(--field); color: var(--ink); font: 400 13.5px/1.4 var(--mono); }
 label.drop { display: flex; align-items: center; gap: 11px; cursor: pointer; border: 1px solid var(--rule-firm); border-radius: 3px; padding: 13px 14px; background: var(--field); }
 label.drop:hover { border-color: var(--ink); }
 label.drop input[type=file] { display: none; }
@@ -181,6 +182,13 @@ details.behind > summary { cursor: pointer; font: 500 11px/1 var(--mono); letter
 details.behind > summary:hover { color: var(--ink); }
 details.behind > .row { margin-top: 14px; }
 .empty { font: 400 12.5px/1.65 var(--mono); color: var(--muted); border: 1px dashed var(--rule-firm); border-radius: 3px; padding: 12px 13px; }
+input[type=search] { padding: 9px 11px; border: 1px solid var(--rule-firm); border-radius: 3px; background: var(--field); color: var(--ink); font: 400 13px/1.4 var(--mono); min-width: 14rem; }
+input[type=search]:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+/* "Use in next question": a real control, not a caption. */
+label.use { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; font: 600 13px/1.3 var(--sans); color: var(--ink); text-transform: none; letter-spacing: 0; }
+label.use input { width: 18px; height: 18px; margin: 0; accent-color: var(--ink); cursor: pointer; }
+label.use small { font: 400 12px/1.4 var(--mono); color: var(--muted); }
+.bubble.unused { opacity: .55; }
 footer.fine { margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--rule); font: 400 12px/1.75 var(--mono); color: var(--muted); max-width: 74ch; }
 </style>
 </head>
@@ -234,20 +242,30 @@ footer.fine { margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--r
         <h2>Private chat</h2>
         <p class="deck">An OpenAI-compatible endpoint that masks the conversation on the way out and restores your real values on the way back.</p>
         <div class="block">
-          <label class="blabel" for="msg">Your question</label>
-          <textarea id="msg" spellcheck="false">Please remind Rahul Verma (MRN 4471902) that his insulin refill is ready, and email him at rahul.verma@example.net.</textarea>
+          <span class="blabel">From data folder</span>
+          <div id="folderBox"></div>
+          <span class="blabel">Attached data</span>
+          <div id="dataList"></div>
           <label class="drop">
             <span class="plus">+</span>
-            <span class="lines"><b>Attach a text file or PDF</b><span class="muted" id="file2Info">Its text is added below your question. A scanned PDF is read by OCR.</span></span>
+            <span class="lines"><b>Attach a text file or PDF as data</b><span class="muted" id="file2Info">Kept on this page (in memory only, never saved) and sent with every question until you remove it. A scanned PDF is read by OCR.</span></span>
             <input type="file" id="file2" accept=".txt,.md,.csv,.tsv,.json,.log,.xml,.html,.yml,.yaml,.pdf,text/*,application/pdf">
           </label>
+          <label class="blabel" for="msg">Your question</label>
+          <textarea id="msg" spellcheck="false">Please remind Rahul Verma (MRN 4471902) that his insulin refill is ready, and email him at rahul.verma@example.net.</textarea>
+          <label class="blabel" for="model">Model</label>
+          <select id="model"><option value="">loading the models…</option></select>
+          <span class="muted" id="modelInfo">Every Send uses the model picked here until you pick another.</span>
           <div class="row-actions">
             <button id="send">Send ($0.01)</button>
+            <button class="ghost" id="newConv" type="button">New conversation</button>
             <button class="ghost" id="tryMedia">Try an image or PDF (refused)</button>
             <input type="file" id="media" accept="image/*,.pdf,application/pdf" hidden>
           </div>
+          <span class="muted" id="sizeInfo"></span>
         </div>
         <div id="chatOut"></div>
+        <div id="turnsOut"></div>
       </section>
 
       <section class="sheet" id="t3" hidden>
@@ -488,7 +506,8 @@ async function pdfText(file, progress = () => {}) {
   } finally { if (worker) await worker.terminate(); }
   return { text: pages.join("\n\n"), pages: pdf.numPages, ocred, skipped };
 }
-function attach(inputId, areaId, infoId, limit, below) {
+// sink(name, text), when given, receives the file's text instead of a text box (Private chat's attached data).
+function attach(inputId, areaId, infoId, limit, below, sink) {
   $(inputId).onchange = async (ev) => {
     const file = ev.target.files[0]; ev.target.value = "";
     const info = $(infoId);
@@ -513,6 +532,12 @@ function attach(inputId, areaId, infoId, limit, below) {
       text = await file.text();
       if (text.includes("\u0000")) return refuse("this looks like a binary file, not text.");
     }
+    if (sink) {
+      sink(file.name, text);
+      info.className = "muted";
+      info.textContent = `${file.name}: ${text.length.toLocaleString()} characters attached as data${from}. ` + review + "It goes with every question until you remove it.";
+      return;
+    }
     const area = $(areaId);
     area.value = below ? area.value.replace(/\s+$/, "") + "\n\n" + text : text;
     const over = text.length > limit;
@@ -522,7 +547,295 @@ function attach(inputId, areaId, infoId, limit, below) {
   };
 }
 attach("file1", "text", "file1Info", 20000, false);
-attach("file2", "msg", "file2Info", 48000, true);
+attach("file2", null, "file2Info", 48000, true, addData);
+
+// Model pick list. The list is whatever the gateway serves (GET /v1/models, so it follows the catalog); the default is
+// the console server's --default-model. Your pick is remembered in this browser and sent as "model" with every chat,
+// so the gateway uses that model alone until you pick another. chainaim/auto lets the gateway rank and fall back.
+const AUTO = "chainaim/auto";
+const MODEL_KEY = "chainaim.console.model";
+const savedModel = { get() { try { return localStorage.getItem(MODEL_KEY); } catch { return null; } }, set(v) { try { localStorage.setItem(MODEL_KEY, v); } catch { /* storage blocked: the pick lasts until reload */ } } };
+let pickedModel; // undefined until the list loads: chat then sends no model and the gateway ranks
+(async () => {
+  const sel = $("model"), info = $("modelInfo");
+  let list = [], def = AUTO;
+  try {
+    const r = await call("/gateway/models");
+    list = r.models ?? []; def = r.defaultModel || AUTO;
+    modelLimits = r.limits ?? {}; maxOutputTokens = r.maxOutputTokens ?? null;
+  } catch { /* handled below */ }
+  if (!list.length) {
+    sel.replaceChildren(el("option", { value: "", textContent: "no models listed" }));
+    info.className = "err";
+    info.textContent = "The gateway listed no models, so chat sends none and the gateway picks. Check that the gateway is up (use-ollama.cmd), then reload.";
+    return;
+  }
+  const name = (id) => (id === AUTO ? "Auto: the gateway ranks the models and falls back" : id) + (id === def ? "  (default)" : "");
+  sel.replaceChildren(...list.map((id) => el("option", { value: id, textContent: name(id) })));
+  const saved = savedModel.get();
+  sel.value = list.includes(saved) ? saved : list.includes(def) ? def : list.includes(AUTO) ? AUTO : list[0];
+  const show = () => {
+    pickedModel = sel.value;
+    info.className = "muted";
+    info.textContent = (pickedModel === AUTO ? "Every Send lets the gateway pick, with fallbacks." : `Every Send uses ${pickedModel} alone (no fallback) until you pick another.`) +
+      (list.includes(def) ? "" : ` The console default ${def} is not registered in the catalog.`) + " Your pick is remembered in this browser.";
+    updateSize();
+  };
+  show();
+  sel.onchange = () => { savedModel.set(sel.value); show(); };
+})();
+
+// Private chat context, kept in this page's memory only (never in browser storage, since it can hold statements):
+// the attached data, sent with every question, and the earlier answers, of which the ticked ones go with the next
+// question as assistant turns. Each Send is one request; the model keeps nothing between requests.
+const dataFiles = [];  // { name, text }
+const turns = [];      // { q, a, model, use }
+let modelLimits = {};  // model id -> context length, from the gateway's model list
+let maxOutputTokens = null; // the gateway's --max-output-tokens, from config/generated/summary.json
+const GATEWAY_CHARS = 48000; // MAX_CHAT_CHARS in services/gateway/src/chat.ts
+/** The conversation for one Send: data in the first user turn, ticked earlier answers as assistant turns, the new question last. */
+function buildMessages(question) {
+  const data = dataFiles.map((f) => `Data (${f.name}):\n${f.text}`).join("\n\n");
+  const ask = (q, first) => (!data ? q : first ? `${data}\n\nQuestion: ${q}` : `Question: ${q}`);
+  const used = turns.filter((t) => t.use);
+  const msgs = [];
+  used.forEach((t, i) => msgs.push({ role: "user", content: ask(t.q, i === 0) }, { role: "assistant", content: t.a }));
+  msgs.push({ role: "user", content: ask(question, used.length === 0) });
+  return msgs;
+}
+/** Characters the picked model can take: the gateway's limit, or less when its context minus the output budget is smaller (characters / 4 = tokens, the gateway's estimate). */
+function promptRoom() {
+  const ctx = modelLimits[pickedModel];
+  return ctx && maxOutputTokens ? Math.max(0, Math.min(GATEWAY_CHARS, (ctx - maxOutputTokens) * 4)) : GATEWAY_CHARS;
+}
+function updateSize() {
+  const info = $("sizeInfo");
+  const chars = buildMessages($("msg").value.trim()).reduce((n, m) => n + m.content.length, 0);
+  const room = promptRoom();
+  const used = turns.filter((t) => t.use).length;
+  const dataChars = dataFiles.reduce((n, f) => n + f.text.length, 0);
+  info.className = chars > room ? "err" : "muted";
+  info.textContent = `Next send: ${chars.toLocaleString()} characters (data ${dataChars.toLocaleString()}, ${used} earlier answer${used === 1 ? "" : "s"}) of about ${room.toLocaleString()} for ${pickedModel ?? "the gateway"}.` +
+    (chars > room ? " Too big for this model: remove data, untick earlier answers, or pick a model with more room." : "");
+}
+function renderData() {
+  const rows = dataFiles.map((f, i) => {
+    const remove = el("button", { className: "ghost", type: "button", textContent: "Remove" });
+    remove.onclick = () => { dataFiles.splice(i, 1); renderData(); updateSize(); };
+    if (f.origin === "whole") { remove.disabled = true; remove.title = "Whole folder mode: switch From data folder to Pick files to choose files."; }
+    const from = f.origin === "whole" ? " · whole folder" : f.origin === "folder" ? " · from folder" : "";
+    return el("div", { className: "row-actions" }, pill(`${f.name} · ${f.text.length.toLocaleString()} characters${from}`), remove);
+  });
+  $("dataList").replaceChildren(...(rows.length ? rows : [empty("No data attached: questions are sent on their own.")]));
+}
+function renderTurns() {
+  if (!turns.length) return $("turnsOut").replaceChildren();
+  const items = turns.map((t, i) => {
+    const box = el("input", { type: "checkbox", checked: t.use });
+    box.onchange = () => { t.use = box.checked; updateSize(); };
+    const card = el("div", { className: "bubble ai" + (t.use ? "" : " unused") },
+      el("label", { className: "use" }, box, `Use in next question`, el("small", { textContent: `${i + 1}. ${t.q.slice(0, 100)}${t.q.length > 100 ? "…" : ""} · ${t.model}` })),
+      viewLinks(t.views), markdown(t.a));
+    box.addEventListener("change", () => card.classList.toggle("unused", !box.checked));
+    return card;
+  });
+  $("turnsOut").replaceChildren(block(el("span", { className: "blabel", textContent: "Answers in this conversation — ticked ones go with the next question" }), el("div", { className: "chat" }, ...items)));
+}
+/** Attached data: origin "upload" (+ Attach), "folder" (Pick files) or "whole" (Whole folder). A file loaded again from the same path replaces the old copy. */
+function addData(name, text, origin = "upload", path = "") {
+  if (path) for (let i = dataFiles.length - 1; i >= 0; i--) if (dataFiles[i].path === path) dataFiles.splice(i, 1);
+  dataFiles.push({ name, text, origin, path }); renderData(); updateSize();
+}
+const nextChars = () => buildMessages($("msg").value.trim()).reduce((n, m) => n + m.content.length, 0);
+
+// ---- From data folder ----------------------------------------------------------------------------
+// The console server lists and returns files from the data folders allowed in config/data-sources.json (allowedRoots).
+// This page only NAMES a folder or file; the server refuses anything outside those folders. Loaded files become attached
+// data exactly like uploads: page memory only (never browser storage), masked by the gateway before any model sees them.
+// "Pick files" loads the ticked files once; "Whole folder" sends every listed file with each question, re-read at each Send.
+// Only the folder path is remembered in this browser, never file contents.
+const FOLDER_KEY = "chainaim.console.dataFolder";
+const savedFolder = { get() { try { return localStorage.getItem(FOLDER_KEY); } catch { return null; } }, set(v) { try { localStorage.setItem(FOLDER_KEY, v); } catch { /* blocked: the folder is forgotten on reload */ } } };
+const folder = { config: null, path: "", files: [], truncated: false, picked: new Set(), mode: "whole", filter: "", browse: null, error: "", status: "", statusErr: false };
+const enc = encodeURIComponent;
+async function getJson(url) {
+  const r = await fetch(url);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+  return body;
+}
+const kb = (n) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
+const shownFiles = () => folder.files.filter((f) => f.name.toLowerCase().includes(folder.filter.toLowerCase()));
+const say = (text, isErr = false) => { folder.status = text; folder.statusErr = isErr; renderFolderStatus(); };
+async function loadFolderConfig() {
+  try { folder.config = await getJson("/data/config"); } catch (e) { folder.config = { enabled: false, error: `Can't read the data folder settings: ${e.message}` }; }
+  if (!folder.config.enabled) return renderFolder();
+  folder.mode = folder.config.defaultMode === "pick" ? "pick" : "whole"; // defaultMode in config/data-sources.json
+  const saved = savedFolder.get();
+  await openFolder(saved || folder.config.defaultFolder, Boolean(saved));
+}
+async function openFolder(path, fallBack = false) {
+  folder.error = ""; folder.status = ""; folder.statusErr = false;
+  try {
+    const r = await getJson(`/data/files?path=${enc(path)}`);
+    if (r.path !== folder.path) folder.picked = new Set();
+    folder.path = r.path; folder.files = r.files; folder.truncated = r.truncated;
+    savedFolder.set(r.path);
+  } catch (e) {
+    if (fallBack && path !== folder.config.defaultFolder) return openFolder(folder.config.defaultFolder);
+    folder.path = path; folder.files = []; folder.picked = new Set();
+    folder.error = `${path}: ${e.message}` + (path === folder.config.defaultFolder && !folder.config.defaultExists ? ". Create this folder, or pick another with Change folder." : "");
+  }
+  if (folder.mode === "whole") await useWholeFolder(); else renderFolder();
+}
+async function browse(path) {
+  try { folder.browse = await getJson(`/data/folders?path=${enc(path ?? "")}`); folder.error = ""; }
+  catch (e) { folder.error = e.message; }
+  renderFolder();
+}
+async function readFolderFile(f, progress = () => {}) {
+  const r = await fetch(`/data/file?path=${enc(f.path)}`);
+  if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(`${f.name}: ${b.error || "HTTP " + r.status}`); }
+  if (f.ext === ".pdf") {
+    const res = await pdfText(new File([await r.arrayBuffer()], f.name, { type: "application/pdf" }), progress);
+    if (!res.text.trim()) throw new Error(`${f.name}: no text found in this PDF.`);
+    return res.text;
+  }
+  const text = await r.text();
+  if (text.includes("\u0000")) throw new Error(`${f.name}: this looks like a binary file, not text.`);
+  return text;
+}
+/** Reads folder files into the attached data (Whole folder replaces its previous set). Refuses, and restores the previous data, when the next send would not fit the picked model. */
+async function attachFolderFiles(list, origin) {
+  const loaded = [];
+  for (const f of list) {
+    say(`Reading ${f.name}…`);
+    loaded.push({ name: f.name, text: await readFolderFile(f, (m) => say(`${f.name}: ${m}`)), origin, path: f.path });
+  }
+  const before = dataFiles.slice();
+  const keep = dataFiles.filter((d) => (origin === "whole" ? d.origin !== "whole" : true) && !loaded.some((l) => l.path === d.path));
+  dataFiles.splice(0, dataFiles.length, ...keep, ...loaded);
+  const chars = nextChars(), room = promptRoom();
+  if (chars > room) {
+    dataFiles.splice(0, dataFiles.length, ...before);
+    renderData(); updateSize();
+    throw new Error(`Not loaded: the next send would be ${chars.toLocaleString()} characters, about ${(chars - room).toLocaleString()} over the ${room.toLocaleString()} that ${pickedModel ?? "the model"} can take. Use fewer files, untick earlier answers, or pick a model with more room (qwen2.5-3b and the 1.5b take up to 48,000).`);
+  }
+  renderData(); updateSize();
+  return loaded;
+}
+async function useWholeFolder() {
+  const usable = folder.files.filter((f) => !f.tooBig);
+  renderFolder();
+  try {
+    const loaded = await attachFolderFiles(usable, "whole");
+    say(`${loaded.length} file${loaded.length === 1 ? "" : "s"} from this folder go with every question (re-read at each Send).` + (usable.length < folder.files.length ? ` ${folder.files.length - usable.length} over the size limit left out.` : ""));
+  } catch (e) { say(e.message, true); }
+}
+async function refreshWholeFolder() {
+  const r = await getJson(`/data/files?path=${enc(folder.path)}`);
+  folder.files = r.files; folder.truncated = r.truncated;
+  renderFolder();
+  await attachFolderFiles(folder.files.filter((f) => !f.tooBig), "whole");
+}
+async function setMode(mode) {
+  folder.mode = mode; folder.status = ""; folder.statusErr = false;
+  if (mode === "whole") return useWholeFolder();
+  for (let i = dataFiles.length - 1; i >= 0; i--) if (dataFiles[i].origin === "whole") dataFiles.splice(i, 1);
+  renderData(); updateSize(); renderFolder();
+}
+function renderFolderStatus() { const s = $("folderStatus"); if (s) { s.className = folder.statusErr ? "err" : "muted"; s.textContent = folder.status; } }
+function renderPickTotal() {
+  const s = $("pickTotal"); if (!s) return;
+  if (folder.mode !== "pick") { s.className = "muted"; s.textContent = `${folder.files.length} file${folder.files.length === 1 ? "" : "s"} in this folder${folder.truncated ? " (list cut at maxFiles)" : ""}.`; return; }
+  const sel = folder.files.filter((f) => folder.picked.has(f.name));
+  const bytes = sel.reduce((n, f) => n + f.size, 0);
+  const room = promptRoom();
+  const pdf = sel.some((f) => f.ext === ".pdf");
+  s.className = bytes > room ? "err" : "muted";
+  s.textContent = `Selected ${sel.length} of ${folder.files.length}: about ${bytes.toLocaleString()} characters${pdf ? " (a PDF's text is measured once it is read)" : ""}. ${pickedModel ?? "The model"} takes about ${room.toLocaleString()} per question, including your question and earlier answers.`;
+}
+function renderFileTable() {
+  const holder = $("folderTable"); if (!holder) return;
+  const pick = folder.mode === "pick";
+  const t = el("table");
+  t.append(el("thead", {}, el("tr", {}, ...[pick ? "Use" : "Sent", "File", "Size", "Modified"].map((h) => el("th", { textContent: h })))));
+  const tb = el("tbody");
+  for (const f of shownFiles()) {
+    const box = el("input", { type: "checkbox", checked: folder.picked.has(f.name), disabled: f.tooBig });
+    box.onchange = () => { if (box.checked) folder.picked.add(f.name); else folder.picked.delete(f.name); renderPickTotal(); };
+    tb.append(el("tr", {},
+      el("td", {}, pick ? box : (f.tooBig ? "no" : "yes")),
+      el("td", { textContent: f.name + (f.tooBig ? "  (over the size limit)" : "") }),
+      el("td", { className: "num", textContent: kb(f.size) }),
+      el("td", { className: "num", textContent: f.modified.slice(0, 16).replace("T", " ") })));
+  }
+  t.append(tb);
+  holder.replaceChildren(el("div", { className: "scroll" }, t), el("span", { className: "muted", id: "pickTotal" }));
+  renderPickTotal();
+}
+function renderFolder() {
+  const box = $("folderBox");
+  const c = folder.config;
+  if (!c) return box.replaceChildren(empty("Reading the data folder settings…"));
+  if (!c.enabled) return box.replaceChildren(el("p", { className: "err", textContent: c.error || "Data folders are off." }));
+  const kids = [];
+  const change = el("button", { className: "ghost", type: "button", textContent: folder.browse ? "Close" : "Change folder…" });
+  change.onclick = () => { if (folder.browse) { folder.browse = null; renderFolder(); } else browse(folder.path); };
+  const refresh = el("button", { className: "ghost", type: "button", textContent: "Refresh" });
+  refresh.onclick = () => openFolder(folder.path);
+  kids.push(el("div", { className: "row-actions" }, pill(folder.path || "(no folder)"), change, refresh));
+  if (folder.browse) {
+    const b = folder.browse, rows = [];
+    if (b.path) {
+      const up = el("button", { className: "ghost", type: "button", textContent: b.parent ? "Up one level" : "Allowed folders" });
+      up.onclick = () => browse(b.parent || "");
+      const use = el("button", { type: "button", textContent: "Use this folder" });
+      use.onclick = () => { folder.browse = null; openFolder(b.path); };
+      rows.push(el("div", { className: "row-actions" }, up, use, el("span", { className: "muted", textContent: b.path })));
+    } else rows.push(el("span", { className: "muted", textContent: "Allowed folders (allowedRoots in config/data-sources.json):" }));
+    const subs = b.folders.map((f) => { const go = el("button", { className: "ghost", type: "button", textContent: "› " + f.name }); go.onclick = () => browse(f.path); return go; });
+    rows.push(subs.length ? el("div", { className: "row-actions" }, ...subs) : empty("No sub-folders here."));
+    kids.push(el("div", { className: "box" }, ...rows));
+  }
+  const modes = el("div", { className: "row-actions" });
+  for (const [value, text] of [["pick", "Pick files"], ["whole", "Whole folder (every file, every question)"]]) {
+    const r = el("input", { type: "radio", name: "folderMode", value, checked: folder.mode === value });
+    r.onchange = () => setMode(value);
+    modes.append(el("label", { className: "muted" }, r, " " + text));
+  }
+  kids.push(modes);
+  if (folder.error) kids.push(el("p", { className: "err", textContent: folder.error }));
+  else if (!folder.files.length) kids.push(empty(`No ${c.extensions.join(", ")} files in this folder.`));
+  else {
+    const filter = el("input", { type: "search", placeholder: "filter by name", value: folder.filter });
+    filter.oninput = () => { folder.filter = filter.value; renderFileTable(); };
+    const controls = el("div", { className: "row-actions" }, filter);
+    if (folder.mode === "pick") {
+      const all = el("button", { className: "ghost", type: "button", textContent: "Select all" });
+      all.onclick = () => { for (const f of shownFiles()) if (!f.tooBig) folder.picked.add(f.name); renderFileTable(); };
+      const none = el("button", { className: "ghost", type: "button", textContent: "None" });
+      none.onclick = () => { folder.picked.clear(); renderFileTable(); };
+      const load = el("button", { type: "button", textContent: "Load selected" });
+      load.onclick = () => busy(load, async () => {
+        const chosen = folder.files.filter((f) => folder.picked.has(f.name));
+        if (!chosen.length) return say("Tick at least one file.", true);
+        try { const loaded = await attachFolderFiles(chosen, "folder"); say(`Loaded ${loaded.length} file${loaded.length === 1 ? "" : "s"} as attached data. They go with every question until you remove them.`); }
+        catch (e) { say(e.message, true); }
+      });
+      controls.append(all, none, load);
+    }
+    kids.push(controls, el("div", { id: "folderTable" }));
+  }
+  kids.push(el("span", { className: "muted", id: "folderStatus" }));
+  box.replaceChildren(...kids);
+  renderFileTable(); renderFolderStatus();
+}
+$("newConv").onclick = () => { turns.length = 0; renderTurns(); $("chatOut").replaceChildren(); updateSize(); };
+$("msg").oninput = updateSize;
+renderData();
+updateSize();
+loadFolderConfig();
 
 $("tryMedia").onclick = () => $("media").click();
 $("media").onchange = (ev) => {
@@ -608,10 +921,52 @@ $("mask").onclick = () => busy($("mask"), async () => {
   if (b.cardsRemoved) out.append(block(empty("Card numbers are deleted rather than replaced. They are absent from the map and cannot be restored.")));
 });
 
+// "Open page" links. An answer that contains a whole HTML page (a ```html block, or a raw <!DOCTYPE html>...</html>)
+// is stored by the console server in memory and served at /view/<id> under a sandbox policy: its scripts run, but it
+// cannot call this console, the gateway or any other address (connect-src 'none'). The link dies when the console restarts.
+const HTML_FENCE = /```html?[^\n]*\n([\s\S]*?)```/gi;
+const LOOKS_LIKE_PAGE = /<!doctype html|<html[\s>]|<body[\s>]|<canvas[\s>]|<svg[\s>]|<script[\s>]/i;
+function htmlPages(answer) {
+  const text = String(answer);
+  const fenced = [...text.matchAll(HTML_FENCE)].map((m) => m[1].trim()).filter((h) => LOOKS_LIKE_PAGE.test(h));
+  if (fenced.length) return fenced;
+  const raw = text.match(/<!doctype html[\s\S]*?<\/html>|<html[\s>][\s\S]*?<\/html>/i);
+  return raw ? [raw[0]] : [];
+}
+async function publishPages(answer) {
+  const out = [];
+  for (const html of htmlPages(answer)) {
+    try {
+      const r = await call("/view", { html });
+      out.push(r.url ? { url: new URL(r.url, location.origin).href, minutes: r.expiresInMin } : { error: `Could not make a link: ${r.error ?? "no reason given"}` });
+    } catch (e) { out.push({ error: `Could not make a link: ${e.message}` }); }
+  }
+  return out;
+}
+function viewLinks(views) {
+  if (!views?.length) return null;
+  const minutes = views.find((v) => v.minutes)?.minutes;
+  return el("div", { className: "row-actions" },
+    ...views.map((v, i) => v.url
+      ? el("a", { href: v.url, target: "_blank", rel: "noopener noreferrer", className: "pill good", textContent: `Open page${views.length > 1 ? " " + (i + 1) : ""} in a new tab \u2197` })
+      : el("span", { className: "err", textContent: v.error })),
+    el("span", { className: "muted", textContent: `Runs sandboxed (no network calls). Kept in the console's memory${minutes ? ` for ${minutes} min` : ""} or until it restarts.` }));
+}
+
 $("send").onclick = () => busy($("send"), async () => {
   const before = await call("/leaving");
   const last = before.length ? before[before.length - 1].at : "";
-  const r = await call("/gateway/chat", { messages: [{ role: "user", content: $("msg").value }] });
+  const question = $("msg").value.trim();
+  if (!question) return alert("Type a question first.");
+  // Whole folder: re-read the folder now, so files added since the last Send are included.
+  if (folder.mode === "whole" && folder.config?.enabled && folder.path) {
+    try { await refreshWholeFolder(); say(`${dataFiles.filter((d) => d.origin === "whole").length} file(s) from this folder sent with this question.`); }
+    catch (e) { say(e.message, true); return alert(e.message); }
+  }
+  // Refuse here, with the numbers, rather than letting the gateway reject a prompt that cannot fit the picked model.
+  const total = nextChars(), room = promptRoom();
+  if (total > room) { updateSize(); return alert(`This question would send ${total.toLocaleString()} characters; ${pickedModel ?? "the model"} takes about ${room.toLocaleString()}. Remove data, untick earlier answers, use Pick files, or pick a model with more room.`); }
+  const r = await call("/gateway/chat", { ...(pickedModel ? { model: pickedModel } : {}), messages: buildMessages(question) });
   await new Promise((ok) => setTimeout(ok, 400));
   const after = (await call("/leaving")).filter((s) => s.at > last);
   const out = $("chatOut"); out.replaceChildren();
@@ -624,10 +979,16 @@ $("send").onclick = () => busy($("send"), async () => {
       cell("Served by", (h["x-chainaim-model"] ?? "?").split("/").pop(), "", h["x-chainaim-model"] ?? ""))));
     // The stand-in's model ids start with "stub/": it only echoes the text, so say so instead of looking like a broken answer.
     if ((h["x-chainaim-model"] ?? "").startsWith("stub/")) out.append(block(el("p", { className: "err", textContent: "Stand-in mode: this fake model only echoes your text back. For real answers, run use-real-models.cmd in the test-console folder and paste your OpenRouter key when it asks." })));
+    const answer = r.body.choices?.[0]?.message?.content ?? "";
+    const views = await publishPages(answer);
     out.append(block(el("span", { className: "blabel", textContent: "Conversation" }),
       el("div", { className: "chat" },
-        bubble("you", "You", el("div", { textContent: $("msg").value })),
-        bubble("ai", "Answer · placeholders restored", markdown(r.body.choices?.[0]?.message?.content ?? "")))));
+        bubble("you", "You", el("div", { textContent: question })),
+        bubble("ai", "Answer · placeholders restored", el("div", {}, viewLinks(views), markdown(answer))))));
+    // Keep the answer text only (not the R1 "reasoning" field), ticked, so a follow-up builds on it.
+    turns.push({ q: question, a: answer, model: r.headers["x-chainaim-model"] ?? "", use: true, views });
+    renderTurns();
+    updateSize();
   }
   const model = after.filter((s) => s.kind === "model");
   const jev = after.filter((s) => s.kind === "jev");
