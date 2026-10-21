@@ -1,46 +1,48 @@
 /**
- * The browser side of paying with Lute, bundled into public/wallet.js by
+ * The browser side of paying with Crossmark, bundled into public/wallet.js by
  * scripts/build-wallet.ts (npm run build:wallet). The page imports these
- * functions from /wallet.js. Only the address and its network's genesis ID are
- * kept in localStorage; Lute keeps the keys.
+ * functions from /wallet.js. Only the address and its network's CAIP-2 id are
+ * kept in localStorage; Crossmark keeps the keys.
  */
-import LuteConnect from "@galaxypay/lute-connect";
+import crossmark from "@crossmarkio/sdk";
 import type { Answer, Failure } from "./answer.ts";
 import { readBalance, type Balance } from "./balance.ts";
-import { NO_LUTE, payWith, within, type PayNetwork } from "./pay.ts";
+import { NO_CROSSMARK, payWith, within, type PayNetwork } from "./pay.ts";
 
 export type { PayNetwork };
 
-const KEY = "privacybuddy.lute";
-/** A blocked Lute popup never answers, so every Lute call has a time limit. */
+const KEY = "privacybuddy.crossmark";
+/** How long to look for the Crossmark extension before saying it is not installed. */
+const DETECT_MS = 3_000;
+/** A Crossmark window the visitor never answers would wait for ever, so every Crossmark call has a time limit. */
 const CONNECT_MS = 120_000;
+const CONNECT_TIMEOUT = "Crossmark did not answer in time. Nothing was shared.";
 
-let lute: LuteConnect | undefined;
-const luteApp = () => (lute ??= new LuteConnect("PrivacyBuddy"));
-
-export function savedAccount(): { address: string; genesisId: string } | null {
+export function savedAccount(): { address: string; caip2: string } | null {
   try {
-    const v = JSON.parse(localStorage.getItem(KEY) ?? "null") as { address?: unknown; genesisId?: unknown } | null;
-    return v && typeof v.address === "string" && typeof v.genesisId === "string" ? { address: v.address, genesisId: v.genesisId } : null;
+    const v = JSON.parse(localStorage.getItem(KEY) ?? "null") as { address?: unknown; caip2?: unknown } | null;
+    return v && typeof v.address === "string" && typeof v.caip2 === "string" ? { address: v.address, caip2: v.caip2 } : null;
   } catch {
     return null;
   }
 }
 
-export async function connect(genesisId: string): Promise<string> {
-  let addresses: string[];
+/** Ask Crossmark for the account to pay from; caip2 is the network this page pays on. */
+export async function connect(caip2: string): Promise<string> {
+  if (!(await crossmark.async.detect(DETECT_MS))) throw new Error(NO_CROSSMARK);
+  let data: { address?: unknown; meta?: { isRejected?: unknown } } | undefined;
   try {
-    addresses = await within(luteApp().connect(genesisId), CONNECT_MS, NO_LUTE);
+    data = (await within(crossmark.async.signInAndWait(), CONNECT_MS, CONNECT_TIMEOUT)).response?.data;
   } catch (e) {
     const m = String((e as Error)?.message ?? "");
-    if (/cancel/i.test(m)) throw new Error("You closed Lute before connecting. Nothing was shared.");
-    if (m === NO_LUTE) throw new Error(NO_LUTE);
-    throw new Error(`Lute could not connect: ${m.slice(0, 200)}`);
+    if (m === CONNECT_TIMEOUT) throw new Error(CONNECT_TIMEOUT);
+    throw new Error(`Crossmark could not connect: ${m.slice(0, 200)}`);
   }
-  const address = addresses[0];
-  if (!address) throw new Error("Lute did not share an account.");
+  if (data?.meta?.isRejected === true) throw new Error("You closed Crossmark before connecting. Nothing was shared.");
+  const address = data?.address;
+  if (typeof address !== "string" || !address) throw new Error("Crossmark did not share an account.");
   try {
-    localStorage.setItem(KEY, JSON.stringify({ address, genesisId }));
+    localStorage.setItem(KEY, JSON.stringify({ address, caip2 }));
   } catch {
     /* private window: the page asks again next time */
   }
@@ -55,12 +57,8 @@ export function disconnect(): void {
   }
 }
 
-export const balance = (address: string, net: PayNetwork): Promise<Balance> => readBalance(address, net.name, net.asset);
-
-/** Without the extension, Lute signs in a pop-up window, which the browser may block. */
-const hasExtension = () => Boolean((window as unknown as { lute?: unknown }).lute);
+export const balance = (address: string, net: PayNetwork): Promise<Balance> => readBalance(address, net.name, { currency: net.asset, issuer: net.issuer });
 
 export function payAndAsk(address: string, net: PayNetwork, masked: string, maxTokens = 512, onSigned?: () => void): Promise<Answer | Failure> {
-  const app = luteApp();
-  return payWith({ signTxns: (txns) => app.signTxns(txns), fetch: (input, init) => fetch(input, init), popup: !hasExtension(), onSigned }, address, net, masked, maxTokens);
+  return payWith({ signAndWait: (tx) => crossmark.async.signAndWait(tx as never), fetch: (input, init) => fetch(input, init), onSigned }, address, net, masked, maxTokens);
 }

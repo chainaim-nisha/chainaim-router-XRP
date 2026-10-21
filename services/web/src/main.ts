@@ -1,7 +1,7 @@
 /**
  * PrivacyBuddy web: entry point. Configuration comes from the environment; see
  * src/config.ts and README.md. The server holds no wallet key: visitors pay
- * from their own Lute wallet in the browser (public/wallet.js).
+ * from their own Crossmark wallet in the browser (public/wallet.js).
  */
 import { serve } from "@hono/node-server";
 import { createWebApp } from "./app.ts";
@@ -26,7 +26,7 @@ const app = createWebApp({
 });
 
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, (info) => {
-  console.log(`[privacybuddy] listening on http://${config.host}:${info.port}  paywall=${config.paywallUrl}  buyers pay with Lute`);
+  console.log(`[privacybuddy] listening on http://${config.host}:${info.port}  paywall=${config.paywallUrl}  buyers pay with Crossmark`);
 });
 const shutdown = () => server.close(() => process.exit(0));
 process.on("SIGINT", shutdown);

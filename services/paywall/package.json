@@ -2,7 +2,7 @@
   "name": "@chainaim/paywall",
   "version": "0.1.0",
   "private": true,
-  "description": "chainaim-paywall: x402 payments (USDC on Algorand) in front of the private chainaim-gateway.",
+  "description": "chainaim-paywall: x402 payments (RLUSD on the XRP Ledger) in front of the private chainaim-gateway.",
   "type": "module",
   "engines": {
     "node": ">=22.22"
@@ -14,14 +14,15 @@
   },
   "dependencies": {
     "@hono/node-server": "2.1.1",
-    "@x402-avm/extensions": "2.6.1",
-    "@x402/avm": "2.27.0",
     "@x402/core": "2.27.0",
+    "@x402/extensions": "2.27.0",
     "@x402/hono": "2.27.0",
-    "hono": "4.13.9"
+    "@x402/xrpl": "2.27.0",
+    "hono": "4.13.9",
+    "ripple-address-codec": "5.0.1"
   },
   "devDependencies": {
-    "@algorandfoundation/algokit-utils": "10.0.0-alpha.42",
-    "@x402/fetch": "2.27.0"
+    "x402-xrpl": "0.3.3",
+    "xrpl": "4.7.0"
   }
 }

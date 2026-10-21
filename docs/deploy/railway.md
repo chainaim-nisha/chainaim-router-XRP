@@ -6,15 +6,15 @@ Three services in one Railway project, on its private network. Only the paywall 
 |---|---|---|---|---|
 | `presidio` | `services/presidio` | `services/presidio/railway.json` | no | `PORT=3000` |
 | `gateway` | `/` | `services/gateway/railway.json` | no | `CHAINAIM_GATEWAY_KEY` (secret); `OPENROUTER_API_KEY` (secret, needed when chat launches) |
-| `paywall` | `services/paywall` | `services/paywall/railway.json` | yes | `AVM_PAY_TO`, `X402_NETWORK`, `FACILITATOR_URL`, `GATEWAY_URL`, `PUBLIC_BASE_URL`, `CHAINAIM_GATEWAY_KEY` |
+| `paywall` | `services/paywall` | `services/paywall/railway.json` | yes | `XRPL_PAY_TO_TESTNET` or `XRPL_PAY_TO_MAINNET`, `XRPL_NETWORK`, `RLUSD_ISSUER_MAINNET` (MainNet only), `GATEWAY_URL`, `PUBLIC_BASE_URL`, `CHAINAIM_GATEWAY_KEY` |
 
 The service names matter: the gateway reaches `presidio.railway.internal:3000`, and the paywall reaches `gateway.railway.internal:8700`.
 
 ## 1. Before you start
 
 - The repository is on GitHub (Railway builds from it, and the challenge asks for the link).
-- A payTo account: an Algorand address you control. For MainNet it must be opted in to USDC (ASA 31566704).
-- A separate buyer account for test payments (self-payments don't count for the challenge). `node scripts/new-account.ts` in `services/paywall` makes one with the 25 words `pay.ts` reads. On TestNet, fund it with ALGO and USDC from the TestNet dispensers.
+- A payTo account: an XRP Ledger address you control (`r...`), funded with the XRP reserve and holding a trust line to the RLUSD issuer (`node scripts/trust-line.ts` in `services/paywall` opens one on TestNet).
+- A separate buyer account for test payments. `node scripts/new-account.ts` in `services/paywall` makes one with the family seed `pay.ts` reads. On TestNet, fund it with XRP (https://xrpl.org/resources/dev-tools/xrp-faucets), open its RLUSD trust line with `scripts/trust-line.ts`, and get RLUSD from https://tryrlusd.com/.
 - A gateway key: `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`
 
 ## 2. Create the services
@@ -23,9 +23,9 @@ The service names matter: the gateway reaches `presidio.railway.internal:3000`, 
 2. `presidio`: Settings, Source, Root Directory `services/presidio`; Config-as-code path `services/presidio/railway.json`; variable `PORT=3000`; memory 2 GB. No public domain.
 3. `gateway`: Root Directory `/`; config path `services/gateway/railway.json`; add a Volume mounted at `/data` (the decision ledger); variable `CHAINAIM_GATEWAY_KEY` = your key. No public domain.
 4. `paywall`: Root Directory `services/paywall`; config path `services/paywall/railway.json`; Networking, Generate Domain. Variables:
-   - `AVM_PAY_TO` = your payTo address
-   - `X402_NETWORK` = `testnet` (switch to `mainnet` in step 5)
-   - `FACILITATOR_URL` = `https://facilitator.goplausible.xyz`
+   - `XRPL_PAY_TO_TESTNET` = your payTo address
+   - `XRPL_NETWORK` = `testnet` (switch to `mainnet` in step 5)
+   - `FACILITATOR_URL_TESTNET` only to use a facilitator other than the default, `https://xrpl-facilitator-testnet.t54.ai`
    - `GATEWAY_URL` = `http://gateway.railway.internal:8700`
    - `PUBLIC_BASE_URL` = `https://<the generated domain>`
    - `CHAINAIM_GATEWAY_KEY` = `${{gateway.CHAINAIM_GATEWAY_KEY}}` (a reference to the gateway's value)
@@ -40,22 +40,22 @@ curl -si -X POST https://<domain>/v1/privacy/scan -H "content-type: application/
 cd services/paywall && npm install && node scripts/pay.ts --dry-run https://<domain>/v1/privacy/scan '{"text":"hi"}'
 ```
 
-The dry run prints the price (0.01 USDC unless `PRICE_SCAN` is set), the asset, the network, your payTo and `tag=x402-global-challenge`. If the gateway can't start, its log names the missing Presidio entity, the entity types Presidio did not detect in its start-up test sentence, or the unreachable Presidio.
+The dry run prints the price (0.01 RLUSD unless `PRICE_SCAN` is set), the asset and its issuer, the network, your payTo and the invoice id. If the gateway can't start, its log names the missing Presidio entity, the entity types Presidio did not detect in its start-up test sentence, or the unreachable Presidio.
 
 ## 4. Pay on TestNet
 
 ```bash
 cd services/paywall
-read -rsp "Buyer's 25 words: " AVM_MNEMONIC && export AVM_MNEMONIC && node scripts/pay.ts https://<domain>/v1/privacy/scan '{"text":"Patient Jane Roe, MRN 991122, was diagnosed with diabetes."}'
+read -rsp "Buyer's family seed: " XRPL_BUYER_SEED_TESTNET && export XRPL_BUYER_SEED_TESTNET && node scripts/pay.ts https://<domain>/v1/privacy/scan '{"text":"Patient Jane Roe, MRN 991122, was diagnosed with diabetes."}'
 ```
 
 Expect `HTTP 200`, the scan result and a payment line with a transaction id. A correct scan result has `dataClass` `PHI`, and its `counts` include PERSON, MEDICAL_RECORD and HEALTH_TERM for this synthetic sentence; anything less means Presidio is not detecting as it should. The paywall's log shows one `payment_settled` line.
 
 ## 5. Switch to MainNet
 
-1. Set `X402_NETWORK=mainnet` and `AVM_PAY_TO` to the MainNet payTo account (opted in to USDC). The service redeploys.
-2. Make one real payment per live route from the separate buyer account: scan and mask now, chat when it launches. The challenge tag is written at settlement, so it is already on the first payment.
-3. Check the Bazaar: `curl 'https://facilitator.goplausible.xyz/discovery/resources?limit=100'` and look for your domain.
+1. Set `XRPL_NETWORK=mainnet`, `XRPL_PAY_TO_MAINNET` to the MainNet payTo account (with an RLUSD trust line), and `RLUSD_ISSUER_MAINNET` to the issuer address copied from Ripple's RLUSD documentation that day. The service redeploys.
+2. Make one real payment per live route from the separate buyer account: scan and mask now, chat when it launches.
+3. Bazaar discovery: the paywall still declares its discovery metadata on every price, but whether the t54 facilitator lists it is not confirmed (open question 4 in `architecture-xrpl-migration.md`).
 
 ## 6. Monitor
 

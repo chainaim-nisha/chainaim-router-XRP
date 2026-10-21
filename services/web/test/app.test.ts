@@ -3,14 +3,16 @@ import { describe, it } from "node:test";
 import { createWebApp } from "../src/app.ts";
 import { browserMaskModule } from "../src/mask.ts";
 
-const TESTNET = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=";
-const PAYTO = "EA7WASZQYXGGRSMGYQLRI6TR2PQCVDC42QULUT5N62UMYO4A6ADCJ6464M";
+const TESTNET = "xrpl:1";
+const RLUSD = "524C555344000000000000000000000000000000";
+const ISSUER = "rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV";
+const PAYTO = "rwaugYNb1VYhPVhV3oEa77Pa9itayatbJd";
 const PAGE = new URL("../public/index.html", import.meta.url);
 const COOKIES = new URL("../public/cookies.html", import.meta.url);
 const WALLET = new URL("../public/wallet.js", import.meta.url);
 
-const quoteHeader = (amount = "10000") =>
-  Buffer.from(JSON.stringify({ accepts: [{ scheme: "exact", network: TESTNET, amount, asset: "10458941", payTo: PAYTO }] })).toString("base64");
+const quoteHeader = (amount = "0.01") =>
+  Buffer.from(JSON.stringify({ accepts: [{ scheme: "exact", network: TESTNET, amount, asset: RLUSD, payTo: PAYTO, extra: { issuer: ISSUER } }] })).toString("base64");
 
 /** A stand-in for the paywall's quote. */
 function fakeFetch(opts: { quote?: boolean } = {}) {
@@ -44,7 +46,7 @@ describe("page and static routes", () => {
     const csp = r.headers.get("content-security-policy") ?? "";
     assert.match(csp, /default-src 'self'/);
     assert.match(csp, /frame-ancestors 'none'/);
-    assert.match(csp, /connect-src 'self' https:\/\/testnet-api\.algonode\.cloud https:\/\/mainnet-api\.algonode\.cloud;/);
+    assert.match(csp, /connect-src 'self' wss:\/\/s\.altnet\.rippletest\.net:51233 wss:\/\/s1\.ripple\.com:51233;/);
     assert.equal(r.headers.get("x-content-type-options"), "nosniff");
     assert.match(await r.text(), /PrivacyBuddy/);
   });
@@ -87,12 +89,13 @@ describe("page and static routes", () => {
 });
 
 describe("GET /api/wallets", () => {
-  it("shows the network, Lute's genesis ID, the algod node, the pay-to address and the chat price", async () => {
+  it("ARCH-015 shows the network, its CAIP-2 id, the XRP Ledger server, RLUSD's code and issuer, the pay-to address and the chat price", async () => {
     assert.deepEqual(await (await makeApp().request("/api/wallets")).json(), {
       network: "testnet",
-      genesisId: "testnet-v1.0",
-      algodUrl: "https://testnet-api.algonode.cloud",
-      asset: "10458941",
+      caip2: "xrpl:1",
+      wsUrl: "wss://s.altnet.rippletest.net:51233/",
+      asset: RLUSD,
+      issuer: ISSUER,
       payTo: { address: PAYTO },
       prices: { chat: 0.01 },
     });
@@ -100,6 +103,6 @@ describe("GET /api/wallets", () => {
 
   it("still answers when the paywall cannot quote", async () => {
     const body = (await (await makeApp({ fetcher: fakeFetch({ quote: false }) }).request("/api/wallets")).json()) as any;
-    assert.deepEqual([body.network, body.genesisId, body.algodUrl, body.payTo, body.prices.chat], ["unknown", null, null, null, null]);
+    assert.deepEqual([body.network, body.caip2, body.wsUrl, body.asset, body.issuer, body.payTo, body.prices.chat], ["unknown", null, null, null, null, null, null]);
   });
 });

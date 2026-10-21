@@ -1,30 +1,28 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { AlgorandClient } from "@algorandfoundation/algokit-utils/algorand-client";
-import { AFTER_APPROVAL, payWith, SIGN_TIMEOUT, SIGN_TIMEOUT_POPUP, type PayDeps, type PayNetwork } from "../src/pay.ts";
-import { CANCELLED, NOT_SIGNED, type WalletTransaction } from "../src/lute-signer.ts";
+import { LedgerError, type LedgerRequest } from "../src/balance.ts";
+import { AFTER_APPROVAL, payWith, SIGN_TIMEOUT, type PayDeps, type PayNetwork } from "../src/pay.ts";
+import { CANCELLED, NOT_SIGNED, type SignReply, type XrplTransaction } from "../src/crossmark-signer.ts";
+import { NOT_ON_LEDGER } from "../src/xrpl-payment.ts";
 
-const TESTNET = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=";
-const BUYER = "EA7WASZQYXGGRSMGYQLRI6TR2PQCVDC42QULUT5N62UMYO4A6ADCJ6464M";
-const PAYTO = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ";
-const NET: PayNetwork = { name: "testnet", genesisId: "testnet-v1.0", algodUrl: "http://algod.test", asset: "10458941" };
+const TESTNET = "xrpl:1";
+const RLUSD = "524C555344000000000000000000000000000000";
+const ISSUER = "rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV";
+const BUYER = "rN5gyNgd5AUh5pNkHfk17cN8QvZEdPKEk6";
+const PAYTO = "rwaugYNb1VYhPVhV3oEa77Pa9itayatbJd";
+const NET: PayNetwork = { name: "testnet", caip2: TESTNET, wsUrl: "ws://ledger.test", asset: RLUSD, issuer: ISSUER };
 const CHAT_URL = "http://web.test/api/chat";
-const SIG = new Uint8Array(64).fill(7);
+const SIGNED_BLOB = "1200002280000000";
 
 const b64 = (v: unknown) => Buffer.from(JSON.stringify(v)).toString("base64");
-const REQUIRED = b64({
-  x402Version: 2,
-  resource: { url: "http://web.test/api/chat" },
-  accepts: [{ scheme: "exact", network: TESTNET, amount: "10000", asset: "10458941", payTo: PAYTO, maxTimeoutSeconds: 300, extra: {} }],
-});
+const OFFER = { scheme: "exact", network: TESTNET, amount: "0.01", asset: RLUSD, payTo: PAYTO, maxTimeoutSeconds: 600, extra: { issuer: ISSUER, invoiceId: "INVOICE-1", sourceTag: 804681468 } };
+const REQUIRED = b64({ x402Version: 2, resource: { url: "http://web.test/api/chat" }, accepts: [OFFER] });
 const ANSWER = JSON.stringify({ choices: [{ message: { content: "Hi <C_PERSON_1>" } }] });
 
-/** An Algorand client with cached suggested params, so building the payment calls no node. */
-const algorand = () =>
-  AlgorandClient.fromConfig({ algodConfig: { server: "http://algod.test", token: "" } }).setSuggestedParamsCache(
-    { consensusVersion: "test", fee: 0n, genesisHash: new Uint8Array(32), genesisId: "testnet-v1.0", minFee: 1000n, flatFee: false, firstValid: 1n, lastValid: 1001n },
-    new Date(Date.now() + 3_600_000),
-  );
+/** The ledger readings a payment needs, so building it calls no node. */
+const ledger: LedgerRequest = async (command) =>
+  ({ account_info: { account_data: { Sequence: 5 } }, fee: { drops: { open_ledger_fee: "12" } }, ledger: { ledger_index: 1000 } })[command] as Record<string, unknown>;
+const signedBy = (data: unknown): SignReply => ({ response: { data } }) as SignReply;
 
 /** A stand-in /api/chat: 402 with the quote first, then `paid` for the request that carries a payment. */
 function chatRoute(paid: (req: Request) => Response | Promise<Response>) {
@@ -39,13 +37,13 @@ function chatRoute(paid: (req: Request) => Response | Promise<Response>) {
 }
 
 function deps(over: Partial<PayDeps> & { fetch: typeof fetch }): PayDeps {
-  return { signTxns: async (txns: WalletTransaction[]) => txns.map(() => SIG), popup: false, chatUrl: CHAT_URL, algorandClient: algorand(), ...over };
+  return { signAndWait: async () => signedBy({ txBlob: SIGNED_BLOB, meta: { isRejected: false } }), chatUrl: CHAT_URL, ledger, ...over };
 }
 
 const ask = (d: PayDeps) => payWith(d, BUYER, NET, "Hi <C_PERSON_1>");
 
 describe("payWith", () => {
-  it("returns the answer with its receipt after Lute signs", async () => {
+  it("ARCH-016 returns the answer with its receipt after Crossmark signs", async () => {
     const route = chatRoute(() => new Response(ANSWER, { headers: { "payment-response": b64({ success: true, transaction: "TX1", network: TESTNET }), "x-chainaim-model": "m:free" } }));
     let signedCalls = 0;
     const a = await ask(deps({ fetch: route.fetcher, onSigned: () => signedCalls++ }));
@@ -55,27 +53,59 @@ describe("payWith", () => {
     assert.deepEqual(JSON.parse(await route.seen[1].text()), { model: "chainaim/auto", messages: [{ role: "user", content: "Hi <C_PERSON_1>" }], max_tokens: 512 });
   });
 
-  it("says cancelled when the Lute window is closed (code 4100)", async () => {
+  it("ARCH-016 asks Crossmark to sign one RLUSD Payment for the quoted price, and sends it with the offer and the invoice", async () => {
     const route = chatRoute(() => new Response(ANSWER));
-    const signTxns = () => Promise.reject(Object.assign(new Error("User Rejected Request"), { code: 4100 }));
-    await assert.rejects(ask(deps({ fetch: route.fetcher, signTxns })), { message: CANCELLED });
+    const asked: XrplTransaction[] = [];
+    await ask(deps({ fetch: route.fetcher, signAndWait: async (tx) => (asked.push(tx), signedBy({ txBlob: SIGNED_BLOB })) }));
+    assert.equal(asked.length, 1);
+    const amount = { currency: RLUSD, issuer: ISSUER, value: "0.01" };
+    assert.deepEqual(
+      [asked[0].TransactionType, asked[0].Account, asked[0].Destination, asked[0].Amount, asked[0].SendMax, asked[0].SourceTag, asked[0].Sequence, asked[0].Fee, asked[0].LastLedgerSequence],
+      ["Payment", BUYER, PAYTO, amount, amount, 804681468, 5, "12", 1122],
+    );
+    assert.equal(route.seen[0].headers.get("payment-signature"), null, "the first request asks for the price");
+    const payment = JSON.parse(Buffer.from(route.seen[1].headers.get("payment-signature")!, "base64").toString("utf8"));
+    assert.deepEqual(payment, { x402Version: 2, accepted: OFFER, payload: { signedTxBlob: SIGNED_BLOB, invoiceId: "INVOICE-1" }, resource: { url: "http://web.test/api/chat" } });
+  });
+
+  it("ARCH-016 says cancelled when the Crossmark request is rejected", async () => {
+    const route = chatRoute(() => new Response(ANSWER));
+    const signAndWait = async () => signedBy({ txBlob: "", meta: { isRejected: true } });
+    await assert.rejects(ask(deps({ fetch: route.fetcher, signAndWait })), { message: CANCELLED });
     assert.equal(route.seen.length, 1, "no paid request was sent");
   });
 
-  it("says Lute did not answer in time, and with no extension mentions pop-ups", async () => {
+  it("ARCH-016 says Crossmark did not answer in time", async () => {
     const route = chatRoute(() => new Response(ANSWER));
     const never = () => new Promise<never>(() => {});
-    await assert.rejects(ask(deps({ fetch: route.fetcher, signTxns: never, signMs: 20 })), { message: SIGN_TIMEOUT });
-    await assert.rejects(ask(deps({ fetch: route.fetcher, signTxns: never, signMs: 20, popup: true })), { message: SIGN_TIMEOUT_POPUP });
-    assert.equal(SIGN_TIMEOUT, "Lute did not answer in time. Nothing was paid.");
-    assert.equal(SIGN_TIMEOUT_POPUP, "Lute did not answer in time. If no Lute window appeared, allow pop-ups for this page. Nothing was paid.");
+    await assert.rejects(ask(deps({ fetch: route.fetcher, signAndWait: never, signMs: 20 })), { message: SIGN_TIMEOUT });
+    assert.equal(SIGN_TIMEOUT, "Crossmark did not answer in time. Nothing was paid.");
+    assert.equal(route.seen.length, 1, "no paid request was sent");
   });
 
-  it("keeps 'Lute did not sign' (nothing paid) when Lute leaves our transaction unsigned", async () => {
+  it("ARCH-016 keeps 'Crossmark did not sign' (nothing paid) when Crossmark returns no signed transaction", async () => {
     const route = chatRoute(() => new Response(ANSWER));
     let signedCalls = 0;
-    await assert.rejects(ask(deps({ fetch: route.fetcher, signTxns: async (t) => t.map(() => null), onSigned: () => signedCalls++ })), { message: NOT_SIGNED });
+    await assert.rejects(ask(deps({ fetch: route.fetcher, signAndWait: async () => signedBy({}), onSigned: () => signedCalls++ })), { message: NOT_SIGNED });
     assert.equal(signedCalls, 0);
+    assert.equal(route.seen.length, 1, "no paid request was sent");
+  });
+
+  it("ARCH-016 says nothing was paid, and asks Crossmark for nothing, when the account is not on the ledger", async () => {
+    const route = chatRoute(() => new Response(ANSWER));
+    let asked = 0;
+    const unfunded: LedgerRequest = async () => {
+      throw new LedgerError("actNotFound", "Account not found.");
+    };
+    await assert.rejects(ask(deps({ fetch: route.fetcher, ledger: unfunded, signAndWait: async () => (asked++, signedBy({ txBlob: SIGNED_BLOB })) })), { message: NOT_ON_LEDGER });
+    assert.equal(asked, 0);
+    assert.equal(route.seen.length, 1);
+  });
+
+  it("ARCH-016 says nothing was paid when the price is quoted for another network", async () => {
+    const route = chatRoute(() => new Response(ANSWER));
+    await assert.rejects(payWith(deps({ fetch: route.fetcher }), BUYER, { ...NET, name: "mainnet", caip2: "xrpl:0" }, "Hi <C_PERSON_1>"), /^Error: The payment could not be made \(the price is not quoted for xrpl:0\)\. Nothing was paid\.$/);
+    assert.equal(route.seen.length, 1);
   });
 
   it("warns to check the wallet when the connection fails after signing", async () => {
@@ -113,8 +143,8 @@ describe("payWith", () => {
   it("shows the paywall's reason and the network when it refuses the payment", async () => {
     const refusal = () => new Response("{}", { status: 402, headers: { "payment-required": b64({ x402Version: 2, error: "invalid payment group", accepts: [] }) } });
     const a = (await ask(deps({ fetch: chatRoute(refusal).fetcher }))) as { error: string };
-    assert.equal(a.error, "The payment was not accepted (invalid payment group). Check that your wallet holds USDC on TestNet and has opted in to it. You were not charged.");
+    assert.equal(a.error, "The payment was not accepted (invalid payment group). Check that your wallet holds RLUSD on TestNet and has a trust line for it. You were not charged.");
     const main = (await payWith(deps({ fetch: chatRoute(refusal).fetcher }), BUYER, { ...NET, name: "mainnet" }, "Hi <C_PERSON_1>")) as { error: string };
-    assert.match(main.error, /holds USDC on MainNet and has opted in/);
+    assert.match(main.error, /holds RLUSD on MainNet and has a trust line/);
   });
 });

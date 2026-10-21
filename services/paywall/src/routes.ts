@@ -3,8 +3,8 @@
  * section 9). Prices come from the configuration (PRICE_SCAN, PRICE_MASK,
  * PRICE_CHAT). Every example here is synthetic.
  */
-import { declareDiscoveryExtension } from "@x402-avm/extensions";
-import { CHALLENGE_TAG, type PaywallConfig, type Priced } from "./config.ts";
+import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
+import type { PaywallConfig, Priced } from "./config.ts";
 
 export type PaidRoute = { key: string; path: string; priced: Priced; description: string; discovery: Record<string, unknown> };
 
@@ -111,21 +111,51 @@ export const PAID_ROUTES: readonly PaidRoute[] = [
   },
 ];
 
+/** An RLUSD amount as the XRP Ledger writes it: a decimal string, the currency code, and the issuer and invoice in extra. */
+export type RlusdPrice = { amount: string; asset: string; extra: { issuer: string; invoiceId: string } };
+
 export type RouteEntry = {
-  accepts: { scheme: "exact"; price: string; network: string; payTo: string; extra: { tag: string } }[];
+  accepts: {
+    scheme: "exact";
+    /** Called for every request, because each quoted price has its own invoice. */
+    price: (request: { paymentHeader?: string }) => RlusdPrice;
+    network: string;
+    payTo: string;
+    maxTimeoutSeconds: number;
+    extra: { sourceTag: number };
+  }[];
   description: string;
   mimeType: "application/json";
   resource?: string;
   extensions: Record<string, unknown>;
 };
 
-/** The route table for paymentMiddleware: one exact USDC price per route (from the configuration), the challenge tag, and the Bazaar metadata. */
-export function routesConfig(config: PaywallConfig): Record<string, RouteEntry> {
+/**
+ * The route table for paymentMiddleware: one exact RLUSD price per route (from
+ * the configuration), the invoice the payment must commit to, and the Bazaar
+ * metadata. invoiceFor gives the invoice id for a request from its payment
+ * header (undefined when the request carries no payment).
+ */
+export function routesConfig(config: PaywallConfig, invoiceFor: (paymentHeader: string | undefined) => string): Record<string, RouteEntry> {
   return Object.fromEntries(
     PAID_ROUTES.map((r): [string, RouteEntry] => [
       r.key,
       {
-        accepts: [{ scheme: "exact", price: config.prices[r.priced], network: config.network, payTo: config.payTo, extra: { tag: CHALLENGE_TAG } }],
+        accepts: [
+          {
+            scheme: "exact",
+            // "$0.01" is 0.01 RLUSD: the issued-currency amount is the decimal itself, never a count of micro-units.
+            price: (request) => ({
+              amount: config.prices[r.priced].slice(1),
+              asset: config.currencyCode,
+              extra: { issuer: config.issuer, invoiceId: invoiceFor(request.paymentHeader) },
+            }),
+            network: config.network,
+            payTo: config.payTo,
+            maxTimeoutSeconds: config.maxTimeoutSeconds,
+            extra: { sourceTag: config.sourceTag },
+          },
+        ],
         description: r.description,
         mimeType: "application/json",
         ...(config.publicBaseUrl ? { resource: `${config.publicBaseUrl}${r.path}` } : {}),

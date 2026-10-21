@@ -1,22 +1,77 @@
 /**
- * Pay for one call to a deployed paywall route: x402, exact scheme, USDC on
- * Algorand. The buyer is the account whose 25-word mnemonic is in
- * AVM_MNEMONIC; use an account other than payTo (self-payments do not count
- * for the challenge). --dry-run shows the price and pays nothing.
+ * Pay for one call to a deployed paywall route: x402, exact scheme, RLUSD on
+ * the XRP Ledger. The buyer is the account whose family seed is in
+ * XRPL_BUYER_SEED_TESTNET (or XRPL_BUYER_SEED_MAINNET when XRPL_NETWORK is
+ * mainnet); use an account other than payTo. It needs a trust line to the
+ * RLUSD issuer (scripts/trust-line.ts) and some RLUSD. --dry-run shows the
+ * price and pays nothing.
  *
- *   node scripts/pay.ts --dry-run https://PAYWALL/v1/privacy/scan '{"text":"..."}'
- *   AVM_MNEMONIC="word1 ... word25" node scripts/pay.ts https://PAYWALL/v1/privacy/scan '{"text":"..."}'
+ * The body comes from exactly one of --text, --body-file or the positional
+ * argument. Prefer the flags: a shell of its own may strip the quotes out of
+ * JSON on the command line, or split it on its spaces, and the error that
+ * follows names the JSON rather than the shell that broke it.
+ *
+ *   node scripts/pay.ts --dry-run https://PAYWALL/v1/privacy/scan
+ *   node scripts/pay.ts https://PAYWALL/v1/privacy/mask --text "Patient Jane Roe, MRN 991122."
+ *   node scripts/pay.ts https://PAYWALL/v1/chat/completions --body-file ask.json
+ *   node scripts/pay.ts https://PAYWALL/v1/privacy/scan '{"text":"..."}'
  */
+import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
-const { values, positionals } = parseArgs({ allowPositionals: true, options: { "dry-run": { type: "boolean", default: false } } });
-const [url, body = "{}"] = positionals;
-if (!url) {
-  console.error("usage: node scripts/pay.ts [--dry-run] URL [JSON_BODY]");
+const { values, positionals } = parseArgs({
+  allowPositionals: true,
+  options: {
+    "dry-run": { type: "boolean", default: false },
+    /** Scan and mask take { "text": ... }: this wraps the value, so no JSON reaches the shell. */
+    text: { type: "string" },
+    /** A file holding the whole JSON body, for a shape --text cannot build (chat, tool calls). */
+    "body-file": { type: "string" },
+  },
+});
+
+const USAGE = "usage: node scripts/pay.ts [--dry-run] URL [--text TEXT | --body-file FILE | JSON_BODY]";
+
+/** A problem with the arguments: print the message and exit with 2, as the other scripts do. */
+function fail(message: string): never {
+  console.error(message);
   process.exit(2);
 }
-JSON.parse(body); // fail early on a malformed body
+
+function readBodyFile(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (e) {
+    fail(`cannot read ${path}: ${(e as Error).message}`);
+  }
+}
+
+const [url, positionalBody] = positionals;
+if (!url) fail(USAGE);
+
+// One source of truth for the body: two would hide which one was sent.
+const sources = [values.text !== undefined, values["body-file"] !== undefined, positionalBody !== undefined].filter(Boolean).length;
+if (sources > 1) fail("give the body once: --text, --body-file or the positional argument, not more than one");
+
+const body =
+  values.text !== undefined
+    ? JSON.stringify({ text: values.text })
+    : values["body-file"] !== undefined
+      ? readBodyFile(values["body-file"])
+      : (positionalBody ?? "{}");
+
+try {
+  JSON.parse(body); // fail early on a malformed body
+} catch (e) {
+  const where = values["body-file"] !== undefined ? values["body-file"] : "the request body";
+  fail(`${where} is not valid JSON: ${(e as Error).message}`);
+}
+
 const init = { method: "POST", headers: { "content-type": "application/json" }, body };
+
+/** A 160-bit currency code such as RLUSD's reads as its letters; a three-letter code is shown as it is. */
+const currencyName = (asset: unknown): string =>
+  typeof asset === "string" && /^[0-9A-Fa-f]{40}$/.test(asset) ? Buffer.from(asset, "hex").toString("latin1").replace(/\0+$/, "") : String(asset);
 
 if (values["dry-run"]) {
   const r = await fetch(url, init);
@@ -27,34 +82,25 @@ if (values["dry-run"]) {
   }
   const required = JSON.parse(Buffer.from(header, "base64").toString("utf8"));
   for (const a of required.accepts) {
-    console.log(`price ${Number(a.amount) / 1e6} USDC (asset ${a.asset}) on ${a.network} to ${a.payTo}; tag=${a.extra?.tag ?? "none"}`);
+    // An issued-currency amount is already a decimal: 0.01 is one cent of RLUSD, never a count of micro-units.
+    console.log(`price ${a.amount} ${currencyName(a.asset)} (asset ${a.asset}, issuer ${a.extra?.issuer ?? "none"}) on ${a.network} to ${a.payTo}; invoice=${a.extra?.invoiceId ?? "none"}`);
   }
   console.log(`resource ${required.resource?.url}; bazaar=${required.extensions?.bazaar ? "yes" : "no"}`);
   process.exit(0);
 }
 
-const mnemonic = process.env.AVM_MNEMONIC?.trim();
-if (!mnemonic) {
-  console.error("AVM_MNEMONIC is required: the buyer account's 25 words");
-  process.exit(2);
-}
 // Loaded only when paying, so --dry-run needs no signing libraries.
-const { x402Client, wrapFetchWithPayment, x402HTTPClient } = await import("@x402/fetch");
-const { toClientAvmSigner } = await import("@x402/avm");
-const { ExactAvmScheme } = await import("@x402/avm/exact/client");
-const { seedFromMnemonic } = await import("@algorandfoundation/algokit-utils/algo25");
-const { ed25519SigningKeyFromWrappedSecret } = await import("@algorandfoundation/algokit-utils/crypto");
-
-// The signer takes seed + public key, base64, as in the x402 Algorand examples.
-const seed = seedFromMnemonic(mnemonic);
-const seedCopy = new Uint8Array(seed);
-const key = await ed25519SigningKeyFromWrappedSecret({ unwrapEd25519Seed: async () => seed, wrapEd25519Seed: async () => {} });
-const signer = toClientAvmSigner(Buffer.concat([Buffer.from(seedCopy), Buffer.from(key.ed25519Pubkey)]).toString("base64"));
-const client = new x402Client().register("algorand:*", new ExactAvmScheme(signer));
-console.log(`buyer ${signer.address}`);
-
-const r = await wrapFetchWithPayment(fetch, client)(url, init);
-console.log(`HTTP ${r.status}`);
-console.log((await r.text()).slice(0, 1000));
-if (r.ok) console.log(`payment ${JSON.stringify(new x402HTTPClient(client).getPaymentSettleResponse((name) => r.headers.get(name)))}`);
-process.exitCode = r.ok ? 0 : 1;
+const { account, payAndFetch, SetupError } = await import("./xrpl.ts");
+try {
+  const buyer = account(process.env);
+  console.log(`buyer ${buyer.wallet.classicAddress} on ${buyer.network}`);
+  const { response: r, receipt } = await payAndFetch(url, init, buyer);
+  console.log(`HTTP ${r.status}`);
+  console.log((await r.text()).slice(0, 1000));
+  if (r.ok) console.log(`payment ${JSON.stringify(receipt)}`);
+  process.exitCode = r.ok ? 0 : 1;
+} catch (e) {
+  if (!(e instanceof SetupError)) throw e;
+  console.error(e.message);
+  process.exitCode = 2;
+}

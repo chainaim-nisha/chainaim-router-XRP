@@ -9,9 +9,11 @@ import { pathToFileURL } from "node:url";
 import { SECURITY_HEADERS } from "../src/app.ts";
 import { buildVercel } from "../scripts/build-vercel.ts";
 
-const TESTNET = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=";
-const PAYTO = "EA7WASZQYXGGRSMGYQLRI6TR2PQCVDC42QULUT5N62UMYO4A6ADCJ6464M";
-const quote = Buffer.from(JSON.stringify({ accepts: [{ scheme: "exact", network: TESTNET, amount: "10000", asset: "10458941", payTo: PAYTO }] })).toString("base64");
+const TESTNET = "xrpl:1";
+const PAYTO = "rwaugYNb1VYhPVhV3oEa77Pa9itayatbJd";
+const quote = Buffer.from(
+  JSON.stringify({ accepts: [{ scheme: "exact", network: TESTNET, amount: "0.01", asset: "524C555344000000000000000000000000000000", payTo: PAYTO, extra: { issuer: "rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV" } }] }),
+).toString("base64");
 
 const listen = (server: Server) => new Promise<number>((resolve) => server.listen(0, "127.0.0.1", () => resolve((server.address() as AddressInfo).port)));
 const close = (server: Server) => new Promise<void>((resolve) => server.close(() => resolve()));

@@ -1,6 +1,6 @@
 /**
  * Configuration from the environment. The server holds no wallet key: visitors
- * pay from their own Lute wallet in the browser.
+ * pay from their own Crossmark wallet in the browser.
  */
 export type WebConfig = {
   port: number;

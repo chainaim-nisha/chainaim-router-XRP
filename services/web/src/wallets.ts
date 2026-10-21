@@ -1,18 +1,16 @@
 /**
  * Reads that feed the wallet chips: what the paywall asks for (pay-to address,
- * network, asset, price), taken from its own 402 quote. The wallet balance
+ * network, RLUSD currency code and issuer, price), taken from its own 402 quote. The wallet balance
  * read lives in balance.ts, which the browser also uses.
  */
 import { NETWORKS } from "./balance.ts";
 
-export type Quote = { payTo: string; network: string; asset: string; price: number };
+export type Quote = { payTo: string; network: string; asset: string; issuer: string; price: number };
 export type NetworkName = "testnet" | "mainnet" | "unknown";
 
-const TESTNET = "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=";
-
 export function networkName(caip2: string): NetworkName {
-  if (caip2 === TESTNET) return "testnet";
-  if (caip2.startsWith("algorand:wGHE2Pw")) return "mainnet";
+  if (caip2 === NETWORKS.testnet.caip2) return "testnet";
+  if (caip2 === NETWORKS.mainnet.caip2) return "mainnet";
   return "unknown";
 }
 
@@ -27,13 +25,15 @@ export async function readQuote(paywallUrl: string, route: string, fetcher: type
   const header = r.headers.get("payment-required");
   if (r.status !== 402 || !header) throw new Error(`the paywall did not quote a price (HTTP ${r.status})`);
   const accepts = (JSON.parse(Buffer.from(header, "base64").toString("utf8")) as { accepts?: Record<string, unknown>[] }).accepts?.[0];
-  if (!accepts || typeof accepts.payTo !== "string" || typeof accepts.network !== "string" || accepts.asset === undefined || !Number.isFinite(Number(accepts.amount))) {
+  const issuer = (accepts?.extra as { issuer?: unknown } | null | undefined)?.issuer;
+  if (!accepts || typeof accepts.payTo !== "string" || typeof accepts.network !== "string" || typeof accepts.asset !== "string" || typeof issuer !== "string" || !Number.isFinite(Number(accepts.amount))) {
     throw new Error("the paywall's quote is not in the expected shape");
   }
-  return { payTo: accepts.payTo, network: accepts.network, asset: String(accepts.asset), price: Number(accepts.amount) / 1e6 };
+  // An RLUSD amount is already a decimal: "0.01" is one cent. It is not a count of micro-units, so it is not divided.
+  return { payTo: accepts.payTo, network: accepts.network, asset: accepts.asset, issuer, price: Number(accepts.amount) };
 }
 
-/** Lute's genesis ID and the public algod node for a known network. */
-export function networkInfo(name: NetworkName): { genesisId: string; algodUrl: string } | null {
+/** The CAIP-2 id and the public XRP Ledger server for a known network. */
+export function networkInfo(name: NetworkName): { caip2: string; wsUrl: string } | null {
   return name === "unknown" ? null : NETWORKS[name];
 }

@@ -1,6 +1,6 @@
 /**
  * POST /api/chat: the browser's paid chat call, relayed to the paywall. The
- * browser runs the x402 client and the visitor's Lute wallet signs; this route
+ * browser runs the x402 client and the visitor's Crossmark wallet signs; this route
  * only checks that the request is this page's request with nothing left to
  * mask, then passes the x402 exchange through unchanged. It holds no key, and
  * it logs neither the text nor the payment.

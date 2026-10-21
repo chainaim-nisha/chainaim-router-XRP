@@ -1,6 +1,6 @@
 /**
  * chainaim-paywall: the only public service (spec section 9). It asks for
- * payment (x402, exact scheme, USDC on Algorand through the GoPlausible
+ * payment (x402, exact scheme, RLUSD on the XRP Ledger through the t54
  * facilitator), then proxies the call to the private gateway with the
  * gateway key. Payment headers are never forwarded, so the gateway cannot
  * learn who paid.
@@ -13,11 +13,11 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
-import { ExactAvmScheme } from "@x402/avm/exact/server";
+import { ExactXrplScheme } from "@x402/xrpl/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
-import { bazaarResourceServerExtension } from "@x402-avm/extensions";
+import { bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import type { PaywallConfig } from "./config.ts";
-import { paymentKey, ReplayGuard } from "./replay.ts";
+import { InvoiceBook } from "./invoices.ts";
 import { PAID_ROUTES, routesConfig } from "./routes.ts";
 
 /** The same limit as the gateway's default --max-body-bytes. */
@@ -26,11 +26,11 @@ export const MAX_BODY_BYTES = 4 * 1024 * 1024;
 /** Gateway response headers passed back to the caller; everything else is dropped. */
 const PASS_BACK = /^(content-type|retry-after|x-chainaim-[a-z-]+)$/;
 
-export type PaywallDeps = { log?: (line: string) => void; now?: () => number; maxReplayEntries?: number };
+export type PaywallDeps = { log?: (line: string) => void; now?: () => number; maxOpenInvoices?: number };
 
 const SITE_NAME = "PrivacyBuddy";
 const OWNER = "ChainAim";
-const SITE_DESCRIPTION = "Private AI chat. Sensitive details are masked before any model sees them, and every answer is paid per call in USDC on Algorand with x402.";
+const SITE_DESCRIPTION = "Private AI chat. Sensitive details are masked before any model sees them, and every answer is paid per call in RLUSD on the XRP Ledger with x402.";
 
 /**
  * The root page. The facilitator's Bazaar names a merchant from the HTML at the
@@ -66,12 +66,13 @@ function errorBody(c: Context, status: 404 | 413 | 502 | 503, message: string, h
 
 export function createPaywall(config: PaywallConfig, deps: PaywallDeps = {}): Hono {
   const log = deps.log ?? ((line: string) => console.log(line));
-  const server = new x402ResourceServer(new HTTPFacilitatorClient({ url: config.facilitatorUrl })).register(config.network, new ExactAvmScheme());
+  const server = new x402ResourceServer(new HTTPFacilitatorClient({ url: config.facilitatorUrl })).register(config.network, new ExactXrplScheme());
   server.registerExtension(bazaarResourceServerExtension as never);
   // A payment is accepted once: a refused call is never settled, so nothing else stops a replay from draining the free-model quota.
-  const replays = new ReplayGuard(deps.now, deps.maxReplayEntries);
+  const invoices = new InvoiceBook(config.maxTimeoutSeconds * 1000, deps.now, deps.maxOpenInvoices);
   server.onBeforeVerify(async (ctx) => {
-    if (replays.claim(paymentKey(ctx.paymentPayload.payload))) return;
+    const invoiceId = (ctx.requirements.extra as { invoiceId?: unknown } | undefined)?.invoiceId;
+    if (typeof invoiceId === "string" && invoices.claim(invoiceId)) return;
     return { abort: true, reason: "payment_already_used", message: "this payment was already presented; sign a new one" };
   });
   // Payment log: one line per settled payment; never a decision id or a body.
@@ -138,7 +139,7 @@ export function createPaywall(config: PaywallConfig, deps: PaywallDeps = {}): Ho
     return errorBody(c, 503, `chat is unavailable right now (${reason}); you were not charged`, { "retry-after": retryAfter });
   });
 
-  app.use(paymentMiddleware(routesConfig(config), server));
+  app.use(paymentMiddleware(routesConfig(config, (paymentHeader) => invoices.forRequest(paymentHeader)), server));
 
   for (const route of PAID_ROUTES) app.post(route.path, proxy);
   app.get("/", (c) => c.html(ROOT_PAGE));

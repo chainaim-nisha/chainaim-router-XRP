@@ -10,7 +10,7 @@ level. Every example uses made-up data.
 | 2 | Gateway answering scan, mask and chat with stand-ins | Same |
 | 3 | The full stack in Docker, plus the test console in your browser | Docker Desktop |
 | 4 | Chat answered by real free models | An OpenRouter key |
-| 5 | The PrivacyBuddy web page, paying per answer from your Lute wallet on TestNet | The Lute wallet extension |
+| 5 | The PrivacyBuddy web page, paying per answer from your Crossmark wallet on TestNet | The Crossmark wallet extension |
 
 The two detailed guides, if you get stuck or want the reasons behind a step:
 [SETUP.md](SETUP.md) (tests, stand-ins, payments, configuration) and
@@ -27,7 +27,7 @@ agent ──▶ paywall :8080 (public, x402) ──▶ gateway :8700 ──▶ O
 | Folder | What it is |
 |---|---|
 | `services/gateway` | Scan, mask and private chat. Plain TypeScript run by Node, no npm install |
-| `services/paywall` | x402 payments in USDC on Algorand; the only public part |
+| `services/paywall` | x402 payments in RLUSD on the XRP Ledger; the only public part |
 | `services/presidio` | Our Presidio image (adds Indian IDs such as Aadhaar and PAN) |
 | `services/web` | PrivacyBuddy, the demo web page |
 | `test-console` | A local page at :8730 that drives the Docker stack |
@@ -184,13 +184,13 @@ node -e "require('fs').writeFileSync('test-console/local-gateway-key.txt', requi
 
 ### 3.3 Make a TestNet address for the paywall
 
-The paywall needs an Algorand TestNet address to receive payments. Make one:
+The paywall needs an XRP Ledger TestNet address to receive payments. Make one:
 
 ```powershell
 node services/paywall/scripts/new-account.ts
 ```
 
-It prints an address and 25 words. Keep the words in a password manager, never
+It prints an address and a family seed. Keep the seed in a password manager, never
 in a file or a chat, then clear the terminal (`cls`). Only the address goes in
 the next step.
 
@@ -211,7 +211,7 @@ $env:CHAINAIM_GATEWAY_KEY = (Get-Content -Raw test-console\local-gateway-key.txt
 Replace `YOUR_TESTNET_ADDRESS` with the address from 3.3:
 
 ```powershell
-docker run -d --name ca-paywall --network chainaim-test -e AVM_PAY_TO=YOUR_TESTNET_ADDRESS -e X402_NETWORK=testnet -e GATEWAY_URL=http://gateway.railway.internal:8700 -e CHAINAIM_GATEWAY_KEY -p 127.0.0.1:8080:8080 chainaim-paywall:test
+docker run -d --name ca-paywall --network chainaim-test -e XRPL_PAY_TO_TESTNET=YOUR_TESTNET_ADDRESS -e XRPL_NETWORK=testnet -e GATEWAY_URL=http://gateway.railway.internal:8700 -e CHAINAIM_GATEWAY_KEY -p 127.0.0.1:8080:8080 chainaim-paywall:test
 ```
 
 ### 3.5 Start the gateway
@@ -285,17 +285,16 @@ these settings and how to check a key with `npm run verify:openrouter`.
 ## 5. PrivacyBuddy, the web page (optional)
 
 The page masks a message in the browser, then pays the paywall's chat route
-from **your own Lute wallet**, and shows the answer with the real values put
-back. Nobody types the 25 words: Lute keeps them and asks you to approve each
+from **your own Crossmark wallet**, and shows the answer with the real values put
+back. Nobody types the seed: Crossmark keeps it and asks you to approve each
 payment. It needs the level 3 stack running, and real models from level 4 for
 real answers.
 
-1. Install the Lute extension in Chrome from https://lute.app and make or
+1. Install the Crossmark extension in Chrome from https://crossmark.io and make or
    import a TestNet account in it. This is the buyer; don't use the paywall's
    pay-to account.
-2. Fund it with TestNet ALGO at https://bank.testnet.algorand.network.
-3. Opt it in to TestNet USDC (asset 10458941) and get TestNet USDC at
-   https://faucet.circle.com (choose Algorand Testnet).
+2. Fund it with TestNet XRP from https://xrpl.org/resources/dev-tools/xrp-faucets.
+3. Open its RLUSD trust line and get TestNet RLUSD at https://tryrlusd.com/.
 
 Then, in PowerShell from the project folder:
 
@@ -304,9 +303,9 @@ $env:PAYWALL_URL = "http://127.0.0.1:8080"
 npm --prefix services/web start
 ```
 
-Open http://127.0.0.1:8740 and click **Connect Lute** (top right). Mask a
-message, press Execute, and approve the 0.01 USDC payment in Lute. You can look
-the transaction up at `https://lora.algokit.io/testnet/transaction/<TX ID>`.
+Open http://127.0.0.1:8740 and click **Connect Crossmark** (top right). Mask a
+message, press Execute, and approve the 0.01 RLUSD payment in Crossmark. You can look
+the transaction up at `https://testnet.xrpl.org/transactions/<TX ID>`.
 
 The page as it was in the demo video (a demo wallet held by the server) is the
 git tag `demo-video-v1`.
@@ -339,12 +338,12 @@ After a paywall rebuild, remove and recreate its container:
 | Chat `503` "no_models" | No OpenRouter key on the gateway, or the model list has not loaded yet. Check `docker logs ca-gateway`. |
 | OpenRouter `404` "No endpoints found matching your data policy" | The privacy switch in level 4, step 2. |
 | OpenRouter `429`, or chat stops mid-day | The free daily limit (50 a day under $10 of credits). |
-| Paywall stops: "AVM_PAY_TO must be a 58-character Algorand address" | Use the address from 3.3, not the 25 words. |
+| Paywall stops: "XRPL_PAY_TO_TESTNET must be an XRPL classic address (r...) with a valid checksum" | Use the address from 3.3, not the seed. |
 | A health-data chat is refused and not charged | No free model has a provider that declines to collect data right now. That refusal is on purpose; try later. |
 
 ## Rules for working in this repo
 
-- Never commit keys, 25-word mnemonics or `.env` files. Variable names live in
+- Never commit keys, family seeds or `.env` files. Variable names live in
   `.env.example`, values never do.
 - Use made-up data only (`scripts/synthetic-corpus.ts`), never real customer
   or patient text.

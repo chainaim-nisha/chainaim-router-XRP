@@ -37,8 +37,8 @@ describe("the cookie policy tells the truth", () => {
 
   it("the single browser storage item it names is the one the code uses", () => {
     const entry = read("../src/wallet-entry.ts");
-    assert.match(entry, /const KEY = "privacybuddy\.lute"/);
-    assert.match(COOKIES, /privacybuddy\.lute/);
+    assert.match(entry, /const KEY = "privacybuddy\.crossmark"/);
+    assert.match(COOKIES, /privacybuddy\.crossmark/);
     assert.ok(!/sessionStorage|indexedDB/.test(entry + PAGE));
   });
 

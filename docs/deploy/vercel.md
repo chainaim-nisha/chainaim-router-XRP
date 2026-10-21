@@ -9,7 +9,7 @@ browser ──▶ Vercel ── static: index.html, wallet.js, client-mask.js
                  └── functions /api/wallets, /api/chat ──▶ Railway paywall
 ```
 
-The page needs no keys and holds none: each visitor pays from their own Lute
+The page needs no keys and holds none: each visitor pays from their own Crossmark
 wallet in the browser. The only setting is `PAYWALL_URL`.
 
 How it builds: `services/web/vercel.json` tells Vercel to run `npm ci` and
@@ -102,15 +102,15 @@ Replace `privacybuddy.vercel.app` with your project's address.
    curl -s -X POST https://privacybuddy.vercel.app/api/chat -H "content-type: application/json" -d '{"model":"chainaim/auto","messages":[{"role":"user","content":"Email priya.raman@example.com"}]}'
    ```
 
-3. In Chrome with the Lute extension and a funded TestNet account:
-   1. Open the address. The top right shows **Buyer: Connect Lute** and the
+3. In Chrome with the Crossmark extension and a funded TestNet account:
+   1. Open the address. The top right shows **Buyer: Connect Crossmark** and the
       Pay to chip.
-   2. Click **Connect Lute** and choose the TestNet account. The chip shows
-      its address and USDC balance.
-   3. Press **Try an example**, then **Execute**, and approve 0.01 USDC in
-      Lute.
-   4. The answer appears with your values put back, and "Paid 0.01 USDC ·
-      receipt". Open the receipt on lora to see the payment.
+   2. Click **Connect Crossmark** and choose the TestNet account. The chip shows
+      its address and RLUSD balance.
+   3. Press **Try an example**, then **Execute**, and approve 0.01 RLUSD in
+      Crossmark.
+   4. The answer appears with your values put back, and "Paid 0.01 RLUSD ·
+      receipt". Open the receipt on the XRPL explorer to see the payment.
 
 ## 5. After the first deploy
 
@@ -131,7 +131,7 @@ Replace `privacybuddy.vercel.app` with your project's address.
 | The build fails with a syntax error in a `.ts` file | The Node.js version is older than 22 (step 3.2). |
 | The build fails on `maxDuration` | Fluid Compute is off (step 3.3), or the plan doesn't allow 300 seconds. |
 | A paid answer fails after about 5 minutes | The model took too long. The page says to check your wallet's recent transactions before trying again. |
-| The page loads but Execute says Lute could not open | Install the Lute extension (https://lute.app), or allow pop-ups for the Vercel address. |
+| The page loads but Execute says Crossmark was not found | Install the Crossmark extension (https://crossmark.io), then reload the page. |
 | 404 at `/` | The Root Directory isn't `services/web` (step 2.3). |
 
 ## Building locally

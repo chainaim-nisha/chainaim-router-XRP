@@ -10,8 +10,10 @@ import { serve } from "@hono/node-server";
 import { createPaywall, type PaywallDeps } from "../src/app.ts";
 import { loadConfig, NETWORKS } from "../src/config.ts";
 
-/** Synthetic Algorand address used as payTo and fee payer. */
-export const PAY_TO = "IDNTKBLAMSMIBR5DV5GRRZC7PNDOGRUOSOLHZ7BIOVXJPOWT2O24BMVDPE";
+/** Synthetic XRPL address used as payTo: generated for these tests, its seed discarded. */
+export const PAY_TO = "rwaugYNb1VYhPVhV3oEa77Pa9itayatbJd";
+/** A second synthetic XRPL address, standing in for the MainNet RLUSD issuer. */
+export const ISSUER = "rN5gyNgd5AUh5pNkHfk17cN8QvZEdPKEk6";
 
 export async function listen(server: Server): Promise<string> {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
@@ -39,7 +41,7 @@ export function stubFacilitator(): { server: Server; calls: string[] } {
     calls.push(req.url ?? "");
     res.setHeader("content-type", "application/json");
     if (req.url === "/supported") {
-      const kinds = Object.values(NETWORKS).map((network) => ({ x402Version: 2, scheme: "exact", network, extra: { feePayer: PAY_TO } }));
+      const kinds = Object.values(NETWORKS).map((network) => ({ x402Version: 2, scheme: "exact", network, extra: { areFeesSponsored: false } }));
       res.end(JSON.stringify({ kinds, extensions: ["bazaar"], signers: {} }));
     } else if (req.url === "/verify") {
       res.end(JSON.stringify({ isValid: true, payer: "BUYERADDRESS" }));

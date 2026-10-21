@@ -11,7 +11,7 @@ made-up data.
 |---|---|---|---|
 | Presidio analyzer | `services/presidio` | Finds personal, health and card data in text | 5002 |
 | Gateway | `services/gateway` | Scan, mask and private chat; never public | 8700 |
-| Paywall | `services/paywall` | x402 payments in USDC on Algorand; the only public part | 8080 |
+| Paywall | `services/paywall` | x402 payments in RLUSD on the XRP Ledger; the only public part | 8080 |
 
 Without Docker, two stand-ins replace the outside services:
 `scripts/stub-presidio.ts` (port 5002) and `scripts/stub-openrouter.ts`
@@ -196,8 +196,8 @@ one, and it is never printed):
 export CHAINAIM_GATEWAY_KEY=$(node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))")
 ```
 
-Start the three services. For `AVM_PAY_TO`, use an Algorand TestNet address
-of yours (58 capital letters and digits):
+Start the three services. For `XRPL_PAY_TO_TESTNET`, use an XRP Ledger TestNet
+address of yours (it starts with `r`; `node services/paywall/scripts/new-account.ts` makes one):
 
 ```bash
 docker run -d --name ca-presidio --network chainaim --network-alias presidio.railway.internal chainaim-presidio
@@ -208,7 +208,7 @@ docker run -d --name ca-gateway --network chainaim --network-alias gateway.railw
 ```
 
 ```bash
-docker run -d --name ca-paywall --network chainaim -e AVM_PAY_TO=YOUR_TESTNET_ADDRESS -e X402_NETWORK=testnet -e GATEWAY_URL=http://gateway.railway.internal:8700 -e CHAINAIM_GATEWAY_KEY -p 127.0.0.1:8080:8080 chainaim-paywall
+docker run -d --name ca-paywall --network chainaim -e XRPL_PAY_TO_TESTNET=YOUR_TESTNET_ADDRESS -e XRPL_NETWORK=testnet -e GATEWAY_URL=http://gateway.railway.internal:8700 -e CHAINAIM_GATEWAY_KEY -p 127.0.0.1:8080:8080 chainaim-paywall
 ```
 
 The gateway port is published here only so you can test it; in the
@@ -231,7 +231,7 @@ Expect `{"status":"ok"}`.
 curl -si -X POST http://127.0.0.1:8080/v1/privacy/scan -H "content-type: application/json" -d '{"text":"hi"}'
 ```
 Expect `HTTP/1.1 402 Payment Required` and a `payment-required` header: the
-paywall asks for 0.01 USDC before it runs a scan (set `PRICE_SCAN` to change it).
+paywall asks for 0.01 RLUSD before it runs a scan (set `PRICE_SCAN` to change it).
 
 Call the gateway directly, with its key:
 
@@ -253,36 +253,37 @@ To put the paywall in front of the gateway from step 4 or 5 without Docker
 (that gateway checks no key, so any value works for `CHAINAIM_GATEWAY_KEY`):
 
 ```bash
-cd services/paywall && AVM_PAY_TO=YOUR_TESTNET_ADDRESS X402_NETWORK=testnet GATEWAY_URL=http://127.0.0.1:8700 CHAINAIM_GATEWAY_KEY=local HOST=127.0.0.1 npm start
+cd services/paywall && XRPL_PAY_TO_TESTNET=YOUR_TESTNET_ADDRESS XRPL_NETWORK=testnet GATEWAY_URL=http://127.0.0.1:8700 CHAINAIM_GATEWAY_KEY=local HOST=127.0.0.1 npm start
 ```
 
 The paywall listens on http://127.0.0.1:8080 and needs internet access to
-reach the GoPlausible facilitator. A dry run shows what a call costs and pays
+reach the t54 facilitator. A dry run shows what a call costs and pays
 nothing (run it from `services/paywall`):
 
 ```bash
 node scripts/pay.ts --dry-run http://127.0.0.1:8080/v1/privacy/scan '{"text":"Jane Roe"}'
 ```
-Expect: price 0.01 USDC, asset 10458941 (TestNet USDC), your address as
-payTo, and `tag=x402-global-challenge`.
+Expect: price 0.01 RLUSD, RLUSD's currency code and TestNet issuer, your address as
+payTo, and an invoice id.
 
 A real TestNet payment (optional, free test money):
 
-1. Prepare two TestNet accounts, both opted in to USDC (asset 10458941): the
-   payTo account, and a separate buyer account with TestNet ALGO
-   (https://bank.testnet.algorand.network) and TestNet USDC
-   (https://faucet.circle.com, choose Algorand Testnet).
-2. Pay from `services/paywall`. The buyer's 25 words are read without being
-   shown or saved; never paste them anywhere else or commit them.
+1. Prepare two TestNet accounts, each funded with TestNet XRP
+   (https://xrpl.org/resources/dev-tools/xrp-faucets) and holding an RLUSD
+   trust line (`node scripts/trust-line.ts` in `services/paywall`): the
+   payTo account, and a separate buyer account with TestNet RLUSD
+   (https://tryrlusd.com/).
+2. Pay from `services/paywall`. The buyer's family seed is read without being
+   shown or saved; never paste it anywhere else or commit it.
 
    ```bash
-   read -rsp "Buyer's 25 words: " AVM_MNEMONIC && export AVM_MNEMONIC && node scripts/pay.ts http://127.0.0.1:8080/v1/privacy/scan '{"text":"Patient Jane Roe, MRN 991122, was diagnosed with diabetes."}'
+   read -rsp "Buyer's family seed: " XRPL_BUYER_SEED_TESTNET && export XRPL_BUYER_SEED_TESTNET && node scripts/pay.ts http://127.0.0.1:8080/v1/privacy/scan '{"text":"Patient Jane Roe, MRN 991122, was diagnosed with diabetes."}'
    ```
 3. Verify it. The script's last line is
    `payment {"success":true,"transaction":"<TX ID>",...}`. The paywall prints a
    `payment_settled` line with the same ID (`docker logs ca-paywall` in step
-   6). Open `https://lora.algokit.io/testnet/transaction/<TX ID>`: it shows
-   0.01 USDC from the buyer to your payTo.
+   6). Open `https://testnet.xrpl.org/transactions/<TX ID>`: it shows
+   0.01 RLUSD from the buyer to your payTo.
 
 ## 8. Configuration
 
@@ -293,9 +294,11 @@ Environment variables (names only in `.env.example`; never commit values):
 |---|---|---|
 | `CHAINAIM_GATEWAY_KEY` | gateway, paywall | Shared key. The gateway requires it when started with `--api-key-env CHAINAIM_GATEWAY_KEY` (the production image is). |
 | `OPENROUTER_API_KEY` | gateway | OpenRouter key for chat and Jev. Without it, chat is off and scan and mask still work. |
-| `AVM_PAY_TO` | paywall | The Algorand address that receives payments. |
-| `X402_NETWORK` | paywall | `testnet` (default) or `mainnet`. |
-| `FACILITATOR_URL` | paywall | Default `https://facilitator.goplausible.xyz`. |
+| `XRPL_NETWORK` | paywall | `testnet` (default) or `mainnet`. Only that network's variables below are read. |
+| `XRPL_PAY_TO_TESTNET`, `XRPL_PAY_TO_MAINNET` | paywall | The XRP Ledger address that receives payments on that network. |
+| `RLUSD_ISSUER_TESTNET`, `RLUSD_ISSUER_MAINNET` | paywall | The RLUSD issuer. TestNet has a default; MainNet has none and must be set. |
+| `FACILITATOR_URL_TESTNET`, `FACILITATOR_URL_MAINNET` | paywall | Default: the t54 facilitator for that network. |
+| `XRPL_BUYER_SEED_TESTNET`, `XRPL_BUYER_SEED_MAINNET` | paywall scripts only | The paying account's family seed. Never set on a service. |
 | `GATEWAY_URL` | paywall | Where the gateway is, e.g. `http://127.0.0.1:8700`. |
 | `PUBLIC_BASE_URL` | paywall | The public `https://` address shown in 402 answers and the Bazaar (deployment only). |
 | `PORT`, `HOST` | paywall | Default `8080` and `0.0.0.0`. |
@@ -317,7 +320,7 @@ where only the paywall is public.
 | `503` "the privacy scanner is unavailable" | Presidio is down. Nothing was sent anywhere and nothing is charged. |
 | `401` from the gateway | Missing or wrong `authorization: Bearer <key>` (only when the gateway requires a key). |
 | Chat `503` "chat is unavailable right now (no_models)" | The gateway has no OpenRouter key, or its free model list has not synced yet. |
-| The paywall stops with "AVM_PAY_TO must be a 58-character Algorand address" | Set `AVM_PAY_TO` to a valid address. |
+| The paywall stops with "XRPL_PAY_TO_TESTNET must be an XRPL classic address (r...) with a valid checksum" | Set `XRPL_PAY_TO_TESTNET` to a valid address. |
 | `docker: ... name is already in use` | A container from an earlier run exists; remove it with `docker rm -f <name>`. |
 
 ## PowerShell instead of Git Bash

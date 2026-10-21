@@ -10,11 +10,11 @@ const answerText = JSON.stringify({ choices: [{ message: { content: "Hi <C_PERSO
 
 describe("readAnswer", () => {
   it("reads the answer, model, data class and receipt", () => {
-    assert.deepEqual(readAnswer(200, answerText, headers({ "x-chainaim-model": "m:free", "x-chainaim-data-class": "PII" }), { transaction: "TX1", network: "algorand:x" }), {
+    assert.deepEqual(readAnswer(200, answerText, headers({ "x-chainaim-model": "m:free", "x-chainaim-data-class": "PII" }), { transaction: "TX1", network: "xrpl:1" }), {
       answer: "Hi <C_PERSON_1>",
       model: "m:free",
       dataClass: "PII",
-      payment: { transaction: "TX1", network: "algorand:x" },
+      payment: { transaction: "TX1", network: "xrpl:1" },
     });
   });
 
@@ -25,19 +25,19 @@ describe("readAnswer", () => {
 
   it("explains a payment that was not accepted, without naming a network it does not know", () => {
     assert.deepEqual(readAnswer(402, "{}", headers({}), undefined), {
-      error: "The payment was not accepted. Check that your wallet holds USDC and has opted in to it. You were not charged.",
+      error: "The payment was not accepted. Check that your wallet holds RLUSD and has a trust line for it. You were not charged.",
       status: 402,
     });
   });
 
   it("names the network the payment was for", () => {
-    assert.match((readAnswer(402, "{}", headers({}), undefined, "mainnet") as { error: string }).error, /holds USDC on MainNet and has opted in/);
-    assert.match((readAnswer(402, "{}", headers({}), undefined, "testnet") as { error: string }).error, /holds USDC on TestNet and has opted in/);
+    assert.match((readAnswer(402, "{}", headers({}), undefined, "mainnet") as { error: string }).error, /holds RLUSD on MainNet and has a trust line/);
+    assert.match((readAnswer(402, "{}", headers({}), undefined, "testnet") as { error: string }).error, /holds RLUSD on TestNet and has a trust line/);
   });
 
   it("gives the paywall's own reason for refusing the payment", () => {
     assert.deepEqual(readAnswer(402, "{}", requiredHeader("this payment was already presented; sign a new one"), undefined, "mainnet"), {
-      error: "The payment was not accepted (this payment was already presented; sign a new one). Check that your wallet holds USDC on MainNet and has opted in to it. You were not charged.",
+      error: "The payment was not accepted (this payment was already presented; sign a new one). Check that your wallet holds RLUSD on MainNet and has a trust line for it. You were not charged.",
       status: 402,
     });
   });
