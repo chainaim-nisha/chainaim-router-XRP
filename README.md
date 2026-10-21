@@ -2,12 +2,12 @@
 
 > 🔒 **Project status:** PrivacyBuddy™ is a proprietary submission to the Global x402 Challenge. The source is public so it can be read and judged. It is **not open source**: all rights are reserved except as the [LICENSE](LICENSE) allows.
 
-ChainAim's privacy gateway for AI agents. Agents pay per call in USDC on Algorand (x402) for three services: find personal, health and card data in text (**scan**), replace it with placeholders they can restore (**mask**), and an OpenAI-compatible **private chat** that masks the conversation before any model sees it.
+ChainAim's privacy gateway for AI agents. Agents pay per call in RLUSD on the XRP Ledger (x402) for three services: find personal, health and card data in text (**scan**), replace it with placeholders they can restore (**mask**), and an OpenAI-compatible **private chat** that masks the conversation before any model sees it.
 
 ```
 agent ──HTTPS──▶ paywall (public, x402) ──private network──▶ gateway ──▶ OpenRouter free models (chat)
                    │                                           ├──▶ OpenRouter Decisions API (Jev)
-                   └──▶ GoPlausible facilitator                └──▶ Presidio analyzer (private)
+                   └──▶ t54 facilitator                        └──▶ Presidio analyzer (private)
 ```
 
 Setup on your machine: `SETUP.md`. Design: `docs/superpowers/specs/2026-09-24-privacy-gateway-design.md`. Deployment: `docs/deploy/railway.md`. Decisions: `docs/adr/`.
@@ -40,7 +40,7 @@ The gateway still scans the masked text with Presidio as a second check, and cou
 ```bash
 cd services/paywall
 node scripts/private-ask.ts --file prescription.txt --endpoint scan --dry-run
-AVM_MNEMONIC="<buyer's 25 words>" node scripts/private-ask.ts --file prescription.txt --url https://PAYWALL --endpoint chat
+XRPL_BUYER_SEED_TESTNET="<buyer's family seed>" node scripts/private-ask.ts --file prescription.txt --url https://PAYWALL --endpoint chat
 ```
 
 Flags: `--endpoint chat|scan|mask` (default chat), `--question`, `--max-tokens` (1 to 1024), `--dry-run` (sends and pays nothing), `--keep-masked`, `--no-names`. Limits: `.txt` and `.md` files only; the checks are patterns, not a language model, so a name without a label can be missed on the computer and is left to the gateway's scan. Diagnoses, drugs, ages, dates and places are not masked, because the model needs them or they are not detected.
@@ -60,11 +60,11 @@ OR_DUMMY=sk-or-dummy node services/gateway/src/main.ts --model-source openrouter
 node scripts/smoke.ts --chat
 ```
 
-The paywall in front of it (TestNet; replace `YOUR_TESTNET_ADDRESS` with a real Algorand address of yours, 58 characters with a valid checksum, for example one from `node scripts/new-account.ts`; nothing is paid locally):
+The paywall in front of it (TestNet; replace `YOUR_TESTNET_ADDRESS` with a real XRP Ledger address of yours, starting with `r` and with a valid checksum, for example one from `node scripts/new-account.ts`; nothing is paid locally):
 
 ```bash
 cd services/paywall && npm install
-AVM_PAY_TO=YOUR_TESTNET_ADDRESS GATEWAY_URL=http://127.0.0.1:8700 CHAINAIM_GATEWAY_KEY=local HOST=127.0.0.1 npm start
+XRPL_PAY_TO_TESTNET=YOUR_TESTNET_ADDRESS GATEWAY_URL=http://127.0.0.1:8700 CHAINAIM_GATEWAY_KEY=local HOST=127.0.0.1 npm start
 node scripts/pay.ts --dry-run http://127.0.0.1:8080/v1/privacy/scan '{"text":"Jane Roe"}'
 ```
 

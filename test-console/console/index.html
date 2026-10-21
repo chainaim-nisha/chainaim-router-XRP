@@ -232,7 +232,7 @@ footer.fine { margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--r
           <div class="row-actions">
             <button id="mask">Mask ($0.01)</button>
             <button class="ghost" id="scan">Scan ($0.01)</button>
-            <span class="cost">x402 on Algorand TestNet</span>
+            <span class="cost">x402 on XRPL TestNet</span>
           </div>
         </div>
         <div id="pmOut"></div>
@@ -270,7 +270,7 @@ footer.fine { margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--r
 
       <section class="sheet" id="t3" hidden>
         <h2>Payment</h2>
-        <p class="deck">Calls each paid route without paying, so you can read the quote the paywall returns. Expect 402, with the price and the challenge tag.</p>
+        <p class="deck">Calls each paid route without paying, so you can read the quote the paywall returns. Expect 402, with the price and its invoice.</p>
         <div class="block">
           <span class="blabel">Call a route unpaid</span>
           <div class="row-actions">
@@ -1009,20 +1009,21 @@ for (const b of document.querySelectorAll("[data-route]")) b.onclick = () => bus
   out.append(block(verdict(
     cell("Status", r.status, r.status === 402 ? "clear" : "phi", r.status === 402 ? "payment required" : "unexpected"),
     cell("Route", b.dataset.route),
-    cell("Price", a ? a.price : "—", "", a ? "USDC per call" : "no quote returned"),
+    cell("Price", a ? a.price : "—", "", a ? "RLUSD per call" : "no quote returned"),
     cell("Bazaar", r.bazaar ? "on" : "off", "", r.bazaar ? "discovery metadata" : ""))));
   for (const q of r.accepts ?? []) {
-    const main = /wGHE2Pw/.test(q.network);
-    const lora = `https://lora.algokit.io/${main ? "mainnet" : "testnet"}`;
+    const main = q.network === "xrpl:0";
+    const explorer = `https://${main ? "livenet" : "testnet"}.xrpl.org`;
     const link = (href, text, cls = "") => el("a", { href, target: "_blank", rel: "noopener", textContent: text, className: cls });
     const row = (k, ...v) => el("tr", {}, el("th", { textContent: k }), el("td", {}, ...v));
     out.append(block(el("span", { className: "blabel", textContent: "The quote in full" }),
       el("div", { className: "scroll" }, el("table", { className: "kv" },
-        row("Price", `${q.price} USDC`),
-        row("Network", main ? "Algorand MainNet" : /SGO1GKS/.test(q.network) ? "Algorand TestNet" : q.network),
-        row("Asset", link(`${lora}/asset/${q.asset}`, `USDC (asset ${q.asset})`)),
-        row("Pay to", link(`${lora}/account/${q.payTo}`, q.payTo, "addr")),
-        row("Challenge tag", q.tag),
+        row("Price", `${q.price} RLUSD`),
+        row("Network", main ? "XRPL MainNet" : q.network === "xrpl:1" ? "XRPL TestNet" : q.network),
+        row("Asset", `RLUSD (currency code ${q.asset})`),
+        row("Issuer", link(`${explorer}/accounts/${q.issuer}`, q.issuer, "addr")),
+        row("Pay to", link(`${explorer}/accounts/${q.payTo}`, q.payTo, "addr")),
+        row("Invoice", q.invoiceId),
         row("Bazaar", r.bazaar ? "discovery metadata is on" : "off", el("span", { className: "small", textContent: r.bazaar ? "  (the listing itself appears after the first settled payment)" : "" })))),
       el("p", { className: "muted", textContent: "No payment is made here. The paywall strips payment headers before the gateway sees the request." })));
   }

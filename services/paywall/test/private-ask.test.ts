@@ -64,9 +64,9 @@ describe("scripts/private-ask.ts", () => {
     assert.match(noUrl.stderr, /--url is required/);
   });
 
-  it("refuses to pay without AVM_MNEMONIC, after masking and before any network call", async () => {
-    const r = await run(["--file", file, "--url", "https://pay.example.invalid", "--endpoint", "scan"], { AVM_MNEMONIC: "" });
+  it("ARCH-011 refuses to pay without XRPL_BUYER_SEED_TESTNET, after masking and before any network call", async () => {
+    const r = await run(["--file", file, "--url", "https://pay.example.invalid", "--endpoint", "scan"], { XRPL_NETWORK: "", XRPL_BUYER_SEED_TESTNET: "" });
     assert.equal(r.code, 2);
-    assert.match(r.stderr, /AVM_MNEMONIC/);
+    assert.match(r.stderr, /XRPL_BUYER_SEED_TESTNET is required/);
   });
 });

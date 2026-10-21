@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PrivacyBuddy: spend your tokens wisely</title>
-<meta name="description" content="Private AI chat for financial teams. Sensitive details are hidden on your device before anything is sent, and you pay per answer in USDC on Algorand.">
+<meta name="description" content="Private AI chat for financial teams. Sensitive details are hidden on your device before anything is sent, and you pay per answer in RLUSD on the XRP Ledger.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M16 6l8 3v6c0 5-3.4 8.6-8 11-4.6-2.4-8-6-8-11V9z' fill='white'/%3E%3C/svg%3E">
 <style>
   :root {
@@ -118,7 +118,7 @@
 <main>
   <section class="hero">
     <h1>Spend your tokens <span class="grad">wisely</span></h1>
-    <p class="lead">Private AI chat for financial teams. Sensitive details are hidden on your device before anything is sent, and you pay per answer in USDC on Algorand.</p>
+    <p class="lead">Private AI chat for financial teams. Sensitive details are hidden on your device before anything is sent, and you pay per answer in RLUSD on the XRP Ledger.</p>
     <ul class="trust"><li>Masked on your device</li><li>Pay per answer with x402</li><li>No sign-up needed</li></ul>
     <p class="covers">Hidden automatically: PAN, Aadhaar, bank account and IFSC numbers, card numbers, emails, phone numbers, and names after a label like “Name:”.</p>
   </section>
@@ -159,7 +159,7 @@
   </section>
 </main>
 <footer>
-  <p>PrivacyBuddy · payments settle with x402 on Algorand</p>
+  <p>PrivacyBuddy · payments settle with x402 on the XRP Ledger</p>
   <p class="legal">© 2026 ChainAim. PrivacyBuddy™ is a trademark of ChainAim. All rights reserved. Source-available for the Global x402 Challenge, not open source.<br><a href="https://github.com/chainaimdev/chainaim-router/blob/main/LICENSE" target="_blank" rel="noopener">License</a> · <a href="/cookies.html">Cookie policy</a></p>
   <aside class="disclaimer" aria-labelledby="disclaimerTitle">
   <span class="lab2" id="disclaimerTitle">Disclaimer</span>
@@ -167,11 +167,11 @@
   <details>
     <summary>Read the full disclaimer</summary>
     <div class="full">
-      <p><strong>Experimental beta.</strong> PrivacyBuddy is an experimental beta, built to take part in the Global x402 Challenge. It isn't a finished product. It isn't endorsed by or affiliated with the Algorand Foundation or any model provider.</p>
+      <p><strong>Experimental beta.</strong> PrivacyBuddy is an experimental beta, built to take part in the Global x402 Challenge. It isn't a finished product. It isn't endorsed by or affiliated with Ripple, the XRPL Foundation or any model provider.</p>
       <p><strong>Limited availability.</strong> It will be available for a limited time only. It may be rate limited, and it may change, break, or be shut down at any time without notice.</p>
       <p><strong>AI answers.</strong> Answers come from AI language models. They can be wrong, incomplete, out of date, or biased. They are not medical, legal, financial, or other professional advice. Check anything important yourself before acting on it.</p>
       <p><strong>Privacy.</strong> Masking is best-effort and can miss personal information. Don't send anything you can't afford to have exposed. Masked prompts are passed on to third-party model providers, whose own terms and data practices apply and are outside our control.</p>
-      <p><strong>Payments.</strong> Payments are made in USDC on Algorand through x402. Blockchain transactions are final. You are responsible for your own wallet and keys.</p>
+      <p><strong>Payments.</strong> Payments are made in RLUSD on the XRP Ledger through x402. Blockchain transactions are final. You are responsible for your own wallet and keys.</p>
       <p><strong>Where you can use it.</strong> The application has only been tested in India. Laws on AI, data protection, and crypto-assets differ from place to place, so use your own discretion about whether it's permitted where you are. ChainAim and its research lab take no responsibility for use in any other jurisdiction.</p>
       <p><strong>No warranty.</strong> The service is provided "as is" and "as available", with no warranties of any kind. To the fullest extent the law allows, ChainAim and its research lab are not liable for any loss or damage arising from its use.</p>
     </div>
@@ -196,13 +196,13 @@ const KIND = {
   IN_BANK_ACCOUNT: ["bank account number", "bank account numbers"], MEDICAL_RECORD: ["medical record number", "medical record numbers"], CREDIT_CARD: ["card number", "card numbers"],
 };
 
-let wallets = null; // from /api/wallets: network, genesisId, algodUrl, asset, payTo, prices
-let buyer = null;   // { address, usdc, algo, optedIn } once Lute is connected
-const net = () => (wallets?.genesisId ? { name: wallets.network, genesisId: wallets.genesisId, algodUrl: wallets.algodUrl, asset: wallets.asset } : null);
+let wallets = null; // from /api/wallets: network, caip2, wsUrl, asset, issuer, payTo, prices
+let buyer = null;   // { address, rlusd, xrp, trustLineOpen } once Crossmark is connected
+const net = () => (wallets?.caip2 ? { name: wallets.network, caip2: wallets.caip2, wsUrl: wallets.wsUrl, asset: wallets.asset, issuer: wallets.issuer } : null);
 let current = null; // { masked, map } for the message on screen
 
 /* ---------- wallets, top right ---------- */
-const loraBase = () => `https://lora.algokit.io/${wallets?.network === "mainnet" ? "mainnet" : "testnet"}`;
+const explorerBase = () => `https://${wallets?.network === "mainnet" ? "livenet" : "testnet"}.xrpl.org`;
 
 async function copy(text, button) {
   try { await navigator.clipboard.writeText(text); button.textContent = "Copied"; }
@@ -217,20 +217,20 @@ function chip(label, address, extra) {
   copyBtn.onclick = () => copy(address, copyBtn);
   c.append(el("span", { className: "addr", textContent: short(address), title: address }));
   if (extra) c.append(extra);
-  c.append(copyBtn, el("a", { className: "go", href: `${loraBase()}/account/${address}`, target: "_blank", rel: "noopener", textContent: "↗", title: "Open on lora" }));
+  c.append(copyBtn, el("a", { className: "go", href: `${explorerBase()}/accounts/${address}`, target: "_blank", rel: "noopener", textContent: "↗", title: "Open on the XRPL explorer" }));
   return c;
 }
 
 function buyerChip() {
   if (!buyer) {
-    const b = el("button", { type: "button", className: "connect", textContent: "Connect Lute", title: "Pay from your own Lute wallet" });
+    const b = el("button", { type: "button", className: "connect", textContent: "Connect Crossmark", title: "Pay from your own Crossmark wallet" });
     b.onclick = () => doConnect().catch((e) => showError(e.message));
     return el("div", { className: "chip" }, el("span", { className: "lab", textContent: "Buyer" }), b);
   }
   let bal;
-  if (buyer.usdc !== null) bal = el("span", { className: "bal" + (buyer.usdc <= 0 ? " low" : ""), textContent: `${buyer.usdc} USDC` });
+  if (buyer.rlusd !== null) bal = el("span", { className: "bal" + (buyer.rlusd <= 0 ? " low" : ""), textContent: `${buyer.rlusd} RLUSD` });
   const c = chip("Buyer", buyer.address, bal);
-  const off = el("button", { type: "button", textContent: "Disconnect", title: "Forget this Lute account on this page" });
+  const off = el("button", { type: "button", textContent: "Disconnect", title: "Forget this Crossmark account on this page" });
   off.onclick = () => { disconnect(); buyer = null; renderWallets(); };
   c.append(off);
   return c;
@@ -249,15 +249,15 @@ async function refreshBuyer() {
   const n = net();
   const saved = savedAccount();
   if (!n || !saved) { buyer = null; return; }
-  if (saved.genesisId !== n.genesisId) {
+  if (saved.caip2 !== n.caip2) {
     disconnect();
     buyer = null;
     // An Execute in progress owns the status area; do not overwrite its message.
-    if (!$("execBtn").disabled) showError(`Your Lute account was connected for ${saved.genesisId}, and this page now pays on ${n.genesisId}. Connect again.`);
+    if (!$("execBtn").disabled) showError(`Your Crossmark account was connected for ${saved.caip2}, and this page now pays on ${n.caip2}. Connect again.`);
     return;
   }
-  const b = { address: saved.address, usdc: null, algo: null, optedIn: null };
-  try { Object.assign(b, await balance(saved.address, n)); } catch { /* the node is down: the paywall decides */ }
+  const b = { address: saved.address, rlusd: null, xrp: null, trustLineOpen: null };
+  try { Object.assign(b, await balance(saved.address, n)); } catch { /* the ledger server is down: the paywall decides */ }
   buyer = b;
 }
 
@@ -271,7 +271,7 @@ async function doConnect() {
   const n = net();
   if (!n) throw new Error("The payment service is not answering, so the network is not known yet. Try again in a moment.");
   clearStatus();
-  await connect(n.genesisId);
+  await connect(n.caip2);
   await refreshBuyer();
   renderWallets();
 }
@@ -345,9 +345,9 @@ const clearStatus = () => $("status").replaceChildren();
 function showBusy(text) { $("status").replaceChildren(el("div", { className: "busy" }, el("span", { className: "spin" }), text)); }
 function showError(message, status, transaction) {
   const box = el("div", { className: "error", role: "alert" }, message);
-  if (transaction) box.append(" ", el("a", { href: `${loraBase()}/transaction/${transaction}`, target: "_blank", rel: "noopener", textContent: "See the payment receipt ↗" }));
-  if (wallets?.network === "testnet" && (status === 402 || /USDC/.test(message))) box.append(" ", el("a", { href: "https://faucet.circle.com", target: "_blank", rel: "noopener", textContent: "Get TestNet USDC" }));
-  if (/Lute could not open/.test(message)) box.append(" ", el("a", { href: "https://lute.app", target: "_blank", rel: "noopener", textContent: "Get Lute" }));
+  if (transaction) box.append(" ", el("a", { href: `${explorerBase()}/transactions/${transaction}`, target: "_blank", rel: "noopener", textContent: "See the payment receipt ↗" }));
+  if (wallets?.network === "testnet" && (status === 402 || /RLUSD/.test(message))) box.append(" ", el("a", { href: "https://tryrlusd.com/", target: "_blank", rel: "noopener", textContent: "Get TestNet RLUSD" }));
+  if (/Crossmark was not found/.test(message)) box.append(" ", el("a", { href: "https://crossmark.io", target: "_blank", rel: "noopener", textContent: "Get Crossmark" }));
   $("status").replaceChildren(box);
 }
 
@@ -378,18 +378,18 @@ async function doExecute() {
   $("execBtn").disabled = true;
   try {
     if (!buyer) {
-      showBusy("Connect your Lute wallet…");
+      showBusy("Connect your Crossmark wallet…");
       await doConnect();
       if (!buyer) return; // refreshBuyer already showed why
-      // Without the Lute extension the signing pop-up needs a fresh click, or the browser blocks it.
+      // A second press keeps connecting and paying as two separate approvals.
       clearStatus();
       $("status").append(el("div", {}, "Connected. Press Execute again to pay."));
       return;
     }
     const price = wallets?.prices?.chat;
-    if (buyer.optedIn === false) { showError(`This wallet has not opted in to USDC (asset ${wallets.asset}) yet. Opt in from Lute first. Nothing was sent.`, 402); return; }
-    if (price && buyer.usdc !== null && buyer.usdc < price) { showError(`Your wallet has ${buyer.usdc} USDC and this answer costs ${price}. Fund it with ${wallets?.network === "mainnet" ? "USDC on MainNet" : wallets?.network === "testnet" ? "TestNet USDC" : "USDC"} and try again. Nothing was sent.`, 402); return; }
-    showBusy("Approve the payment in Lute…");
+    if (buyer.trustLineOpen === false) { showError(`This wallet has no trust line for RLUSD (issuer ${wallets.issuer}) yet. Open an RLUSD trust line for this account first. Nothing was sent.`, 402); return; }
+    if (price && buyer.rlusd !== null && buyer.rlusd < price) { showError(`Your wallet has ${buyer.rlusd} RLUSD and this answer costs ${price}. Fund it with ${wallets?.network === "mainnet" ? "RLUSD on MainNet" : wallets?.network === "testnet" ? "TestNet RLUSD" : "RLUSD"} and try again. Nothing was sent.`, 402); return; }
+    showBusy("Approve the payment in Crossmark…");
     const a = await payAndAsk(buyer.address, net(), current.masked, undefined, () => showBusy("Payment approved, waiting for the answer…"));
     if (a.error) { showError(a.error, a.status, a.transaction); return; }
     clearStatus();
@@ -414,8 +414,8 @@ function showAnswer(j) {
   const receipt = $("receipt");
   receipt.replaceChildren();
   const price = wallets?.prices?.chat;
-  receipt.append(price ? `Paid ${price} USDC · ` : "Paid · ");
-  if (j.payment?.transaction) receipt.append("receipt ", el("a", { href: `${loraBase()}/transaction/${j.payment.transaction}`, target: "_blank", rel: "noopener" }, el("code", { textContent: `${j.payment.transaction.slice(0, 8)}…${j.payment.transaction.slice(-6)}` }), " ↗"));
+  receipt.append(price ? `Paid ${price} RLUSD · ` : "Paid · ");
+  if (j.payment?.transaction) receipt.append("receipt ", el("a", { href: `${explorerBase()}/transactions/${j.payment.transaction}`, target: "_blank", rel: "noopener" }, el("code", { textContent: `${j.payment.transaction.slice(0, 8)}…${j.payment.transaction.slice(-6)}` }), " ↗"));
   else receipt.append("the receipt was not returned");
   receipt.hidden = false;
   $("answerPane").hidden = false;

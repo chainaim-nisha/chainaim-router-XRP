@@ -27,7 +27,7 @@ function explain(status: number, text: string, header: (name: string) => string 
   if (status === 402) {
     const reason = refusalReason(header);
     const where = network ? NETWORK_LABEL[network] : undefined;
-    return `The payment was not accepted${reason ? ` (${reason})` : ""}. Check that your wallet holds USDC${where ? ` on ${where}` : ""} and has opted in to it. You were not charged.`;
+    return `The payment was not accepted${reason ? ` (${reason})` : ""}. Check that your wallet holds RLUSD${where ? ` on ${where}` : ""} and has a trust line for it. You were not charged.`;
   }
   try {
     const m = (JSON.parse(text) as { error?: { message?: unknown } }).error?.message;

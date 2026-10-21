@@ -1,8 +1,8 @@
 # PROJECT_CONTEXT: ChainAim privacy gateway
 
-**What it is.** Paid privacy services for AI agents on Algorand (x402, USDC through the GoPlausible facilitator): scan, mask and an OpenAI-compatible private chat that masks the conversation, routes it with Jev across OpenRouter's free models under a data policy, and restores the answer.
+**What it is.** Paid privacy services for AI agents on the XRP Ledger (x402, RLUSD through the t54 facilitator): scan, mask and an OpenAI-compatible private chat that masks the conversation, routes it with Jev across OpenRouter's free models under a data policy, and restores the answer.
 
-**Status (2026-09).** Built for the Algorand Global x402 Challenge (Composite entry): scan and mask, the paywall, and private chat, with tests over stubs. Deployment follows `docs/deploy/railway.md`. Design: `docs/superpowers/specs/2026-09-24-privacy-gateway-design.md`. Plan: `docs/superpowers/plans/2026-09-25-privacy-gateway.md`.
+**Status (2026-10).** The payment rail moved from Algorand/USDC to XRPL/RLUSD on 2026-10-13 (`architecture-xrpl-migration.md`; the privacy pipeline is unchanged). First built for the Global x402 Challenge (Composite entry): scan and mask, the paywall, and private chat, with tests over stubs. Deployment follows `docs/deploy/railway.md`. Design: `docs/superpowers/specs/2026-09-24-privacy-gateway-design.md`. Plan: `docs/superpowers/plans/2026-09-25-privacy-gateway.md`.
 
 ## Components
 | Name | Path | Role |
@@ -24,7 +24,7 @@
 See README.md. `npm test`, `npm run test:paywall`, `npm run test:engine`.
 
 ## Sources of truth
-- x402 on Algorand: `@x402/*` 2.27.0, `@x402-avm/extensions` 2.6.1, GoPlausible facilitator guide
+- x402 on the XRP Ledger: `@x402/*` 2.27.0 (core, hono, extensions, xrpl) on the paywall, `x402-xrpl` 0.3.3 for the paying scripts, t54 facilitator (`https://xrpl-x402.t54.ai/`)
 - OpenRouter: models, key, chat and Decisions API references
 - Presidio: `presidio-analyzer` 2.2.362
 - Decisions: docs/adr/

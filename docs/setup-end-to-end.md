@@ -36,7 +36,7 @@ In **real** mode it calls OpenRouter with your key.
 - Docker Desktop, running, with about 2 GB of memory free for Presidio
 - Free ports 5004, 8080, 8720 and 8730
 - An email address for the OpenRouter account
-- An Algorand TestNet address for the paywall's `AVM_PAY_TO` (step 6)
+- An XRP Ledger TestNet address for the paywall's `XRPL_PAY_TO_TESTNET` (step 6)
 
 ```powershell
 node --version
@@ -238,7 +238,7 @@ node scripts/new-account.ts
 cd ../..
 ```
 
-It prints an address and 25 words. Save the words in a password manager and
+It prints an address and a family seed. Save the seed in a password manager and
 clear the terminal; only the address goes into the next command. Use a
 separate account as the buyer when you make a real TestNet payment.
 
@@ -247,7 +247,7 @@ $env:CHAINAIM_GATEWAY_KEY = (Get-Content -Raw test-console\local-gateway-key.txt
 ```
 
 ```powershell
-docker run -d --name ca-paywall --network chainaim-test -e AVM_PAY_TO=YOUR_TESTNET_ADDRESS -e X402_NETWORK=testnet -e GATEWAY_URL=http://gateway.railway.internal:8700 -e CHAINAIM_GATEWAY_KEY -p 127.0.0.1:8080:8080 chainaim-paywall:test
+docker run -d --name ca-paywall --network chainaim-test -e XRPL_PAY_TO_TESTNET=YOUR_TESTNET_ADDRESS -e XRPL_NETWORK=testnet -e GATEWAY_URL=http://gateway.railway.internal:8700 -e CHAINAIM_GATEWAY_KEY -p 127.0.0.1:8080:8080 chainaim-paywall:test
 ```
 
 The paywall does not need the gateway to start, but it has nothing to forward
@@ -333,7 +333,7 @@ Things to try, all with made-up data:
 
 - Section 1: `Patient Jane Roe, MRN 991122, was diagnosed with diabetes.` Expect names, a record number and a health term, and the class PHI.
 - Section 2: ask something with a name in it. In real mode the answer comes from a free model that never saw the name.
-- Section 3: expect 402 and a price of 0.002, 0.003 or 0.01 USDC.
+- Section 3: expect 402 and a price of 0.002, 0.003 or 0.01 RLUSD.
 
 In real mode the two panels that show what left ChainAim, and what Jev
 received, stay empty: they read the stand-in, which real mode does not use.

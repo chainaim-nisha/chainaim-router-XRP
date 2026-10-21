@@ -244,7 +244,7 @@ createServer(async (req, res) => {
       const required = header ? JSON.parse(Buffer.from(header, "base64").toString("utf8")) : null;
       json(res, 200, {
         status: r.status,
-        accepts: required?.accepts?.map((a: Record<string, any>) => ({ price: Number(a.amount) / 1e6, network: a.network, asset: a.asset, payTo: a.payTo, tag: a.extra?.tag })) ?? [],
+        accepts: required?.accepts?.map((a: Record<string, any>) => ({ price: Number(a.amount), network: a.network, asset: a.asset, issuer: a.extra?.issuer, payTo: a.payTo, invoiceId: a.extra?.invoiceId })) ?? [],
         bazaar: Boolean(required?.extensions?.bazaar),
         body: header ? null : await r.json().catch(() => null),
       });

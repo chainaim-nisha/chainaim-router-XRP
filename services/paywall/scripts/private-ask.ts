@@ -6,7 +6,7 @@
  * leaves this process and is never written to disk.
  *
  *   node scripts/private-ask.ts --file prescription.txt --dry-run
- *   AVM_MNEMONIC="word1 ... word25" node scripts/private-ask.ts --file prescription.txt --url https://PAYWALL [--endpoint chat|scan|mask]
+ *   XRPL_BUYER_SEED_TESTNET="s..." node scripts/private-ask.ts --file prescription.txt --url https://PAYWALL [--endpoint chat|scan|mask]
  *
  * --endpoint      chat (default), scan or mask
  * --question      what to ask about the document (chat only)
@@ -87,22 +87,19 @@ if (dryRun) {
   process.exit(0);
 }
 
-const mnemonic = process.env.AVM_MNEMONIC?.trim() || fail(2, "AVM_MNEMONIC is required: the buyer account's 25 words");
-// Loaded only when paying, so --dry-run needs no signing libraries. Same signer set-up as scripts/pay.ts.
-const { x402Client, wrapFetchWithPayment, x402HTTPClient } = await import("@x402/fetch");
-const { toClientAvmSigner } = await import("@x402/avm");
-const { ExactAvmScheme } = await import("@x402/avm/exact/client");
-const { seedFromMnemonic } = await import("@algorandfoundation/algokit-utils/algo25");
-const { ed25519SigningKeyFromWrappedSecret } = await import("@algorandfoundation/algokit-utils/crypto");
-const seed = seedFromMnemonic(mnemonic);
-const seedCopy = new Uint8Array(seed);
-const key = await ed25519SigningKeyFromWrappedSecret({ unwrapEd25519Seed: async () => seed, wrapEd25519Seed: async () => {} });
-const signer = toClientAvmSigner(Buffer.concat([Buffer.from(seedCopy), Buffer.from(key.ed25519Pubkey)]).toString("base64"));
-const client = new x402Client().register("algorand:*", new ExactAvmScheme(signer));
+// Loaded only when paying, so --dry-run needs no signing libraries. Same buyer set-up as scripts/pay.ts.
+const { account, payAndFetch, SetupError } = await import("./xrpl.ts");
+let buyer;
+try {
+  buyer = account(process.env);
+} catch (e) {
+  if (!(e instanceof SetupError)) throw e;
+  fail(2, e.message);
+}
 
 const url = `${base}${PATHS[endpoint]}`;
-console.log(`buyer ${signer.address}; sending ${bodyText.length} bytes to ${url}`);
-const r = await wrapFetchWithPayment(fetch, client)(url, { method: "POST", headers: { "content-type": "application/json" }, body: bodyText });
+console.log(`buyer ${buyer.wallet.classicAddress}; sending ${bodyText.length} bytes to ${url}`);
+const { response: r, receipt } = await payAndFetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: bodyText }, buyer);
 console.log(`HTTP ${r.status}`);
 r.headers.forEach((value, name) => {
   if (name.startsWith("x-chainaim-")) console.log(`${name}: ${value}`);
@@ -134,4 +131,4 @@ if (endpoint === "chat") {
   console.log(`--- ChainAim server's ${endpoint} of the masked text ---`);
   console.log(answer === undefined ? raw.slice(0, 1000) : JSON.stringify(answer, null, 2));
 }
-console.log(`payment ${JSON.stringify(new x402HTTPClient(client).getPaymentSettleResponse((name) => r.headers.get(name)))}`);
+console.log(`payment ${JSON.stringify(receipt)}`);

@@ -1,11 +1,12 @@
 /**
  * The PrivacyBuddy web app: the page, the browser masking module, the wallet
  * bundle, what the paywall asks for, and the paid chat relay. The server holds
- * no wallet key: the visitor's Lute wallet signs each payment in the browser.
+ * no wallet key: the visitor's Crossmark wallet signs each payment in the browser.
  * Everything it depends on is passed in, so the tests run it with a stand-in paywall.
  */
 import { readFile } from "node:fs/promises";
 import { Hono } from "hono";
+import { NETWORKS } from "./balance.ts";
 import { MAX_MASKED_CHARS, registerRelay } from "./relay.ts";
 import { networkInfo, networkName, readQuote, type Quote } from "./wallets.ts";
 
@@ -15,7 +16,8 @@ const CHAT = "/v1/chat/completions";
 const SCAN = "/v1/privacy/scan";
 const CSP =
   "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; " +
-  "connect-src 'self' https://testnet-api.algonode.cloud https://mainnet-api.algonode.cloud; " +
+  // The browser reads balances and payment details from the public XRP Ledger servers, over WebSocket.
+  `connect-src 'self' ${Object.values(NETWORKS).map((n) => new URL(n.wsUrl).origin).join(" ")}; ` +
   "frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 /** Sent on every response; scripts/build-vercel.ts gives Vercel's static files the same set. */
 export const SECURITY_HEADERS: Record<string, string> = {
@@ -32,7 +34,7 @@ export type Deps = {
   pageFile: URL;
   /** The cookie policy page, public/cookies.html. */
   cookiesFile: URL;
-  /** public/wallet.js: the Lute and x402 browser bundle (npm run build:wallet). */
+  /** public/wallet.js: the Crossmark and x402 browser bundle (npm run build:wallet). */
   walletFile: URL;
   fetcher?: typeof fetch;
   now?: () => number;
@@ -87,9 +89,10 @@ export function createWebApp(deps: Deps): Hono {
     const info = networkInfo(network);
     return c.json({
       network,
-      genesisId: info?.genesisId ?? null,
-      algodUrl: info?.algodUrl ?? null,
+      caip2: info?.caip2 ?? null,
+      wsUrl: info?.wsUrl ?? null,
       asset: q?.quote.asset ?? null,
+      issuer: q?.quote.issuer ?? null,
       payTo: q ? { address: q.quote.payTo } : null,
       prices: { chat: q?.priced ? q.quote.price : null },
     });

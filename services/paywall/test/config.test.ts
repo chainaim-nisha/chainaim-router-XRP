@@ -3,36 +3,90 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CHALLENGE_TAG, DEFAULT_PRICE, loadConfig, NETWORKS } from "../src/config.ts";
+import { DEFAULT_PRICE, DEFAULT_RLUSD_CURRENCY_CODE, DEFAULT_RLUSD_ISSUER_TESTNET, loadConfig, NETWORKS } from "../src/config.ts";
 import { PAID_ROUTES, routesConfig } from "../src/routes.ts";
 
-const PAY_TO = "IDNTKBLAMSMIBR5DV5GRRZC7PNDOGRUOSOLHZ7BIOVXJPOWT2O24BMVDPE";
-const env = { AVM_PAY_TO: PAY_TO, GATEWAY_URL: "http://gateway.railway.internal:8700", CHAINAIM_GATEWAY_KEY: "test-key" };
+const PAY_TO = "rwaugYNb1VYhPVhV3oEa77Pa9itayatbJd";
+/** A second synthetic XRPL address, standing in for the MainNet RLUSD issuer. */
+const ISSUER = "rN5gyNgd5AUh5pNkHfk17cN8QvZEdPKEk6";
+const env = { XRPL_PAY_TO_TESTNET: PAY_TO, GATEWAY_URL: "http://gateway.railway.internal:8700", CHAINAIM_GATEWAY_KEY: "test-key" };
+const mainnet = { ...env, XRPL_NETWORK: "mainnet", XRPL_PAY_TO_MAINNET: PAY_TO, RLUSD_ISSUER_MAINNET: ISSUER };
+/** Every request gets this invoice id in these tests. */
+const INVOICE = "INVOICE-1";
+const invoiceFor = (): string => INVOICE;
 
 describe("loadConfig", () => {
-  it("defaults to TestNet, the GoPlausible facilitator and port 8080", () => {
+  it("ARCH-010 defaults to TestNet, the t54 facilitator, TestNet RLUSD and port 8080", () => {
     const c = loadConfig(env);
-    assert.equal(c.network, "algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=");
+    assert.equal(c.network, "xrpl:1");
     assert.equal(c.networkName, "testnet");
-    assert.equal(c.facilitatorUrl, "https://facilitator.goplausible.xyz");
+    assert.equal(c.facilitatorUrl, "https://xrpl-facilitator-testnet.t54.ai");
+    assert.equal(c.currencyCode, DEFAULT_RLUSD_CURRENCY_CODE);
+    assert.equal(c.issuer, DEFAULT_RLUSD_ISSUER_TESTNET);
+    assert.equal(c.sourceTag, 804681468);
+    assert.equal(c.maxTimeoutSeconds, 600);
     assert.equal(c.port, 8080);
     assert.equal(c.host, "0.0.0.0");
     assert.equal(c.publicBaseUrl, undefined);
   });
 
-  it("selects MainNet", () => {
-    assert.equal(loadConfig({ ...env, X402_NETWORK: "mainnet" }).network, "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=");
+  it("ARCH-010 selects MainNet with XRPL_NETWORK and reads the MainNet variables", () => {
+    const c = loadConfig({ ...mainnet, XRPL_PAY_TO_TESTNET: "" });
+    assert.deepEqual([c.network, c.networkName, c.payTo, c.issuer], ["xrpl:0", "mainnet", PAY_TO, ISSUER]);
+    assert.equal(c.facilitatorUrl, "https://xrpl-facilitator-mainnet.t54.ai");
+  });
+
+  it("ARCH-010 validates only the chosen network's variables", () => {
+    const blankOther = { XRPL_PAY_TO_MAINNET: "", RLUSD_ISSUER_MAINNET: "", FACILITATOR_URL_MAINNET: "", XRPL_CAIP2_MAINNET: "" };
+    assert.equal(loadConfig({ ...env, ...blankOther }).networkName, "testnet");
+    const wrongOther = { XRPL_PAY_TO_MAINNET: "not-an-address", RLUSD_ISSUER_MAINNET: "not-an-address", FACILITATOR_URL_MAINNET: "nowhere", XRPL_CAIP2_MAINNET: "other" };
+    assert.equal(loadConfig({ ...env, ...wrongOther }).networkName, "testnet");
+    assert.equal(loadConfig({ ...mainnet, XRPL_PAY_TO_TESTNET: "not-an-address", RLUSD_ISSUER_TESTNET: "not-an-address" }).networkName, "mainnet");
+  });
+
+  it("ARCH-011 reads the chosen network's CAIP-2 id, facilitator, issuer, currency code, source tag and timeout", () => {
+    const c = loadConfig({
+      ...env,
+      XRPL_CAIP2_TESTNET: "xrpl:2",
+      FACILITATOR_URL_TESTNET: "http://127.0.0.1:9000/",
+      RLUSD_ISSUER_TESTNET: ISSUER,
+      RLUSD_CURRENCY_CODE: "5553444300000000000000000000000000000000",
+      XRPL_SOURCE_TAG: "7",
+      XRPL_MAX_TIMEOUT_SECONDS: "120",
+    });
+    assert.deepEqual(
+      [c.network, c.facilitatorUrl, c.issuer, c.currencyCode, c.sourceTag, c.maxTimeoutSeconds],
+      ["xrpl:2", "http://127.0.0.1:9000", ISSUER, "5553444300000000000000000000000000000000", 7, 120],
+    );
+  });
+
+  it("ARCH-011 has no default MainNet issuer: it is confirmed at deploy time", () => {
+    assert.throws(() => loadConfig({ ...mainnet, RLUSD_ISSUER_MAINNET: "" }), /RLUSD_ISSUER_MAINNET is required/);
   });
 
   it("names the variable that is missing or wrong", () => {
-    assert.throws(() => loadConfig({ ...env, AVM_PAY_TO: "" }), /AVM_PAY_TO/);
-    assert.throws(() => loadConfig({ ...env, AVM_PAY_TO: "not-an-algorand-address" }), /AVM_PAY_TO/);
+    assert.throws(() => loadConfig({ ...env, XRPL_PAY_TO_TESTNET: "" }), /XRPL_PAY_TO_TESTNET/);
+    assert.throws(() => loadConfig({ ...mainnet, XRPL_PAY_TO_MAINNET: "" }), /XRPL_PAY_TO_MAINNET/);
     assert.throws(() => loadConfig({ ...env, GATEWAY_URL: "" }), /GATEWAY_URL/);
     assert.throws(() => loadConfig({ ...env, GATEWAY_URL: "gateway:8700" }), /GATEWAY_URL/);
     assert.throws(() => loadConfig({ ...env, CHAINAIM_GATEWAY_KEY: "" }), /CHAINAIM_GATEWAY_KEY/);
-    assert.throws(() => loadConfig({ ...env, X402_NETWORK: "betanet" }), /X402_NETWORK/);
-    assert.throws(() => loadConfig({ ...env, X402_NETWORK: "toString" }), /X402_NETWORK/);
+    assert.throws(() => loadConfig({ ...env, XRPL_NETWORK: "betanet" }), /XRPL_NETWORK/);
+    assert.throws(() => loadConfig({ ...env, XRPL_NETWORK: "toString" }), /XRPL_NETWORK/);
     assert.throws(() => loadConfig({ ...env, PORT: "eighty" }), /PORT/);
+    assert.throws(() => loadConfig({ ...env, XRPL_CAIP2_TESTNET: "eip155:1" }), /XRPL_CAIP2_TESTNET/);
+    assert.throws(() => loadConfig({ ...env, FACILITATOR_URL_TESTNET: "facilitator:443" }), /FACILITATOR_URL_TESTNET/);
+    assert.throws(() => loadConfig({ ...env, RLUSD_CURRENCY_CODE: "RLUSD" }), /RLUSD_CURRENCY_CODE/);
+    assert.throws(() => loadConfig({ ...env, XRPL_SOURCE_TAG: "4294967296" }), /XRPL_SOURCE_TAG/);
+    assert.throws(() => loadConfig({ ...env, XRPL_SOURCE_TAG: "-1" }), /XRPL_SOURCE_TAG/);
+    assert.throws(() => loadConfig({ ...env, XRPL_MAX_TIMEOUT_SECONDS: "0" }), /XRPL_MAX_TIMEOUT_SECONDS/);
+  });
+
+  it("ARCH-012 refuses a pay-to or issuer address whose checksum is wrong, though its length and characters are right", () => {
+    const oneCharOff = `${PAY_TO.slice(0, -1)}${PAY_TO.endsWith("d") ? "e" : "d"}`;
+    assert.match(oneCharOff, /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/, "it still looks like an address");
+    assert.throws(() => loadConfig({ ...env, XRPL_PAY_TO_TESTNET: oneCharOff }), /XRPL_PAY_TO_TESTNET must be an XRPL classic address/);
+    assert.throws(() => loadConfig({ ...env, RLUSD_ISSUER_TESTNET: oneCharOff }), /RLUSD_ISSUER_TESTNET must be an XRPL classic address/);
+    assert.throws(() => loadConfig({ ...env, XRPL_PAY_TO_TESTNET: "not-an-xrpl-address" }), /XRPL_PAY_TO_TESTNET/);
   });
 
   it("prices every route at $0.01 unless its PRICE_* variable says otherwise", () => {
@@ -59,30 +113,46 @@ describe("paid routes", () => {
       PAID_ROUTES.map((r) => [r.key, r.priced]),
       [["POST /v1/privacy/scan", "scan"], ["POST /v1/privacy/mask", "mask"], ["POST /v1/chat/completions", "chat"]],
     );
-    const routes = routesConfig(loadConfig({ ...env, PRICE_SCAN: "$0.002" }));
-    assert.equal(routes["POST /v1/privacy/scan"].accepts[0].price, "$0.002");
-    assert.equal(routes["POST /v1/privacy/mask"].accepts[0].price, "$0.01");
-    assert.equal(routes["POST /v1/chat/completions"].accepts[0].price, "$0.01");
+    const routes = routesConfig(loadConfig({ ...env, PRICE_SCAN: "$0.002" }), invoiceFor);
+    // ARCH-004: the dollar price is the RLUSD amount, a decimal string, never micro-units.
+    assert.equal(routes["POST /v1/privacy/scan"].accepts[0].price({}).amount, "0.002");
+    assert.equal(routes["POST /v1/privacy/mask"].accepts[0].price({}).amount, "0.01");
+    assert.equal(routes["POST /v1/chat/completions"].accepts[0].price({}).amount, "0.01");
   });
 
-  it("puts the scheme, network, payTo and challenge tag on every accepts entry", () => {
-    const routes = routesConfig(loadConfig({ ...env, X402_NETWORK: "mainnet", PUBLIC_BASE_URL: "https://pay.example.com" }));
+  it("ARCH-013 puts the scheme, network, payTo, RLUSD asset, issuer, invoice, source tag and timeout on every accepts entry", () => {
+    const routes = routesConfig(loadConfig({ ...mainnet, PUBLIC_BASE_URL: "https://pay.example.com" }), invoiceFor);
     for (const r of PAID_ROUTES) {
       const entry = routes[r.key];
-      assert.deepEqual(entry.accepts, [{ scheme: "exact", price: "$0.01", network: NETWORKS.mainnet, payTo: PAY_TO, extra: { tag: CHALLENGE_TAG } }]);
+      assert.equal(entry.accepts.length, 1);
+      const { price, ...fixed } = entry.accepts[0];
+      assert.deepEqual(fixed, { scheme: "exact", network: NETWORKS.mainnet, payTo: PAY_TO, maxTimeoutSeconds: 600, extra: { sourceTag: 804681468 } });
+      assert.deepEqual(price({}), { amount: "0.01", asset: DEFAULT_RLUSD_CURRENCY_CODE, extra: { issuer: ISSUER, invoiceId: INVOICE } });
       assert.equal(entry.resource, `https://pay.example.com${r.path}`);
       assert.equal(entry.mimeType, "application/json");
       assert.equal(entry.description, r.description);
     }
   });
 
+  it("ARCH-013 asks for the invoice of each request, with its payment header when it has one", () => {
+    const asked: (string | undefined)[] = [];
+    const routes = routesConfig(loadConfig(env), (paymentHeader) => {
+      asked.push(paymentHeader);
+      return `INVOICE-${asked.length}`;
+    });
+    const price = routes["POST /v1/privacy/scan"].accepts[0].price;
+    assert.equal(price({}).extra.invoiceId, "INVOICE-1");
+    assert.equal(price({ paymentHeader: "signed" }).extra.invoiceId, "INVOICE-2");
+    assert.deepEqual(asked, [undefined, "signed"]);
+  });
+
   it("leaves the resource URL to the request when PUBLIC_BASE_URL is unset", () => {
-    const routes = routesConfig(loadConfig(env));
+    const routes = routesConfig(loadConfig(env), invoiceFor);
     for (const r of PAID_ROUTES) assert.equal("resource" in routes[r.key], false);
   });
 
   it("declares Bazaar discovery metadata with an input example and an output example", () => {
-    const routes = routesConfig(loadConfig(env));
+    const routes = routesConfig(loadConfig(env), invoiceFor);
     type Info = { input: { body: Record<string, unknown> }; output: { example: unknown } };
     const info = (key: string): Info => (routes[key].extensions as { bazaar: { info: Info } }).bazaar.info;
     assert.deepEqual(Object.keys(info("POST /v1/privacy/scan").input.body), ["text"]);

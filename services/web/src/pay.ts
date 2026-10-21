@@ -1,43 +1,38 @@
 /**
- * One paid chat call: the x402 client asks /api/chat, Lute signs the payment,
- * and the reply becomes an Answer or one plain sentence. Lute and fetch are
- * passed in, so this file has no browser dependency: test/pay.test.ts drives
- * it in Node, and wallet-entry.ts passes the real LuteConnect and fetch.
+ * One paid chat call: /api/chat answers with a price, Crossmark signs the
+ * RLUSD payment for it, and the reply becomes an Answer or one plain sentence.
+ * Crossmark and fetch are passed in, so this file has no browser dependency:
+ * test/pay.test.ts drives it in Node, and wallet-entry.ts passes the real
+ * Crossmark SDK and fetch.
  *
- * Money rule: once Lute has signed, a failure never says "not charged",
+ * Money rule: once Crossmark has signed, a failure never says "not charged",
  * because the payment may have settled.
  */
-import { wrapFetchWithPayment, x402Client, x402HTTPClient } from "@x402/fetch";
-import { ExactAvmScheme } from "@x402/avm/exact/client";
 import { readAnswer, type Answer, type Failure } from "./answer.ts";
-import type { KnownNetwork } from "./balance.ts";
-import { CANCELLED, NOT_SIGNED, luteSigner, type AvmSigner, type SignTxns } from "./lute-signer.ts";
+import { ledgerOverWebSocket, type KnownNetwork, type LedgerRequest } from "./balance.ts";
+import { CANCELLED, NOT_SIGNED, crossmarkSigner, type SignAndWait, type XrplSigner } from "./crossmark-signer.ts";
+import { FEE_TOO_HIGH, NOT_ON_LEDGER, decodeReceipt, decodeRequired, paymentHeader, preparePayment } from "./xrpl-payment.ts";
 
-export type PayNetwork = { name: KnownNetwork; genesisId: string; algodUrl: string; asset: string };
-
-type SchemeConfig = NonNullable<ConstructorParameters<typeof ExactAvmScheme>[1]>;
+export type PayNetwork = { name: KnownNetwork; caip2: string; wsUrl: string; asset: string; issuer: string };
 
 export type PayDeps = {
-  /** Lute's signTxns, untimed: payWith adds the time limit. */
-  signTxns: SignTxns;
+  /** Crossmark's signAndWait, untimed: payWith adds the time limit. */
+  signAndWait: SignAndWait;
   fetch: typeof fetch;
-  /** True when Lute has no extension here and signs in a pop-up window. */
-  popup: boolean;
-  /** Called once Lute has returned the signatures. */
+  /** Called once Crossmark has returned the signed payment. */
   onSigned?: () => void;
   /** The chat route; the browser uses the page-relative default. */
   chatUrl?: string;
   /** Sign time limit in ms (tests shorten it). */
   signMs?: number;
-  /** For tests: an Algorand client with cached suggested params, so no node is called. */
-  algorandClient?: SchemeConfig["algorandClient"];
+  /** For tests: the ledger reads the payment needs, so no node is called. */
+  ledger?: LedgerRequest;
 };
 
-/** A blocked Lute pop-up never answers, so every Lute call has a time limit. */
+/** A Crossmark window the visitor never answers would wait for ever, so every Crossmark call has a time limit. */
 const SIGN_MS = 180_000;
-export const NO_LUTE = "Lute could not open. Install the Lute extension, or allow pop-ups for this page.";
-export const SIGN_TIMEOUT = "Lute did not answer in time. Nothing was paid.";
-export const SIGN_TIMEOUT_POPUP = "Lute did not answer in time. If no Lute window appeared, allow pop-ups for this page. Nothing was paid.";
+export const NO_CROSSMARK = "Crossmark was not found. Install the Crossmark extension, then reload this page.";
+export const SIGN_TIMEOUT = "Crossmark did not answer in time. Nothing was paid.";
 export const AFTER_APPROVAL = "The connection failed after you approved the payment. Check your wallet's recent transactions before trying again.";
 
 export function within<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
@@ -47,14 +42,14 @@ export function within<T>(p: Promise<T>, ms: number, message: string): Promise<T
 }
 
 export async function payWith(deps: PayDeps, address: string, net: PayNetwork, masked: string, maxTokens = 512): Promise<Answer | Failure> {
-  const timeoutMessage = deps.popup ? SIGN_TIMEOUT_POPUP : SIGN_TIMEOUT;
+  const timeoutMessage = SIGN_TIMEOUT;
   let signed = false;
-  const inner = luteSigner(address, (txns) => within(deps.signTxns(txns), deps.signMs ?? SIGN_MS, timeoutMessage));
-  // Marked signed only after luteSigner has checked every signature we asked for.
-  const signer: AvmSigner = {
-    address,
-    async signTransactions(txns, indexesToSign) {
-      const out = await inner.signTransactions(txns, indexesToSign);
+  const inner = crossmarkSigner(address, (tx) => within(deps.signAndWait(tx), deps.signMs ?? SIGN_MS, timeoutMessage));
+  // Marked signed only after crossmarkSigner has checked that Crossmark returned a signed transaction.
+  const signer: XrplSigner = {
+    classicAddress: address,
+    async sign(tx) {
+      const out = await inner.sign(tx);
       signed = true;
       try {
         deps.onSigned?.();
@@ -64,16 +59,24 @@ export async function payWith(deps: PayDeps, address: string, net: PayNetwork, m
       return out;
     },
   };
-  const scheme = new ExactAvmScheme(signer, deps.algorandClient ? { algorandClient: deps.algorandClient } : { algodUrl: net.algodUrl });
-  const client = new x402Client().register("algorand:*", scheme);
-  const paid = wrapFetchWithPayment(deps.fetch, client);
-  let r: Response;
-  try {
-    r = await paid(deps.chatUrl ?? "/api/chat", {
+  const ledger = deps.ledger ?? ledgerOverWebSocket(net.wsUrl);
+  const ask = (payment?: string): Promise<Response> =>
+    deps.fetch(deps.chatUrl ?? "/api/chat", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(payment ? { "PAYMENT-SIGNATURE": payment } : {}) },
       body: JSON.stringify({ model: "chainaim/auto", messages: [{ role: "user", content: masked }], max_tokens: maxTokens }),
     });
+  let r: Response;
+  try {
+    r = await ask();
+    const quoted = r.status === 402 ? r.headers.get("payment-required") : null;
+    if (quoted) {
+      const required = decodeRequired(quoted);
+      const offer = required.accepts.find((a) => a.scheme === "exact" && a.network === net.caip2);
+      if (!offer) throw new Error(`the price is not quoted for ${net.caip2}`);
+      const { signedTxBlob } = await signer.sign(await preparePayment(address, offer, ledger));
+      r = await ask(paymentHeader(offer, signedTxBlob, required.resource));
+    }
   } catch (e) {
     // The visitor sees one plain sentence; the console keeps the real error for debugging (it holds no text or keys).
     console.error("[privacybuddy] paid call failed", { signed, error: e });
@@ -81,16 +84,13 @@ export async function payWith(deps: PayDeps, address: string, net: PayNetwork, m
     if (m.includes(CANCELLED)) throw new Error(CANCELLED);
     if (m.includes(timeoutMessage)) throw new Error(timeoutMessage);
     if (m.includes(NOT_SIGNED)) throw new Error(NOT_SIGNED);
-    if (m.includes(NO_LUTE)) throw new Error(NO_LUTE);
+    if (m.includes(NO_CROSSMARK)) throw new Error(NO_CROSSMARK);
     if (signed) throw new Error(AFTER_APPROVAL);
+    if (m.includes(NOT_ON_LEDGER)) throw new Error(NOT_ON_LEDGER);
+    if (m.includes(FEE_TOO_HIGH)) throw new Error(FEE_TOO_HIGH);
     throw new Error(`The payment could not be made (${m.slice(0, 200)}). Nothing was paid.`);
   }
-  let settled: { transaction?: string; network?: string } | undefined;
-  try {
-    settled = new x402HTTPClient(client).getPaymentSettleResponse((name) => r.headers.get(name)) as typeof settled;
-  } catch {
-    settled = undefined;
-  }
+  const settled = decodeReceipt(r.headers.get("payment-response"));
   const transaction = settled?.transaction ?? null;
   let text: string;
   try {

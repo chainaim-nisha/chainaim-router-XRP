@@ -7,18 +7,18 @@ import { spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { after, before, beforeEach, describe, it } from "node:test";
-import { CHALLENGE_TAG, NETWORKS } from "../src/config.ts";
-import { close, listen, PAY_TO, startPaywall, stubFacilitator, stubGateway } from "./stubs.ts";
+import { DEFAULT_RLUSD_CURRENCY_CODE, DEFAULT_RLUSD_ISSUER_TESTNET, NETWORKS } from "../src/config.ts";
+import { close, ISSUER, listen, PAY_TO, startPaywall, stubFacilitator, stubGateway } from "./stubs.ts";
 
 const KEY = "test-gateway-key";
 
 type PaymentRequired = { accepts: Record<string, any>[]; resource: { url: string }; extensions?: Record<string, any>; [key: string]: any };
 const decode = (header: string | null): PaymentRequired => JSON.parse(Buffer.from(header!, "base64").toString("utf8"));
-/** Each payment carries its own signed transaction, as a real one does; the replay guard rejects a repeat. */
+/** Each payment carries its own signed transaction blob, as a real one does. */
 let paymentCount = 0;
-/** A payment payload the stub facilitator accepts: it echoes the first accepted requirement. */
-const paymentFor = (required: PaymentRequired, group: string[] = [Buffer.from(`signed transaction ${++paymentCount}`).toString("base64")]): string =>
-  Buffer.from(JSON.stringify({ x402Version: 2, accepted: required.accepts[0], payload: { paymentGroup: group, paymentIndex: 0 }, resource: required.resource })).toString("base64");
+/** A payment payload the stub facilitator accepts: it echoes the first accepted requirement, invoice included. */
+const paymentFor = (required: PaymentRequired, signedTxBlob: string = Buffer.from(`signed transaction ${++paymentCount}`).toString("hex").toUpperCase()): string =>
+  Buffer.from(JSON.stringify({ x402Version: 2, accepted: required.accepts[0], payload: { signedTxBlob }, resource: required.resource })).toString("base64");
 
 describe("paywall (TestNet)", () => {
   const facilitator = stubFacilitator();
@@ -30,7 +30,7 @@ describe("paywall (TestNet)", () => {
     const facilitatorUrl = await listen(facilitator.server);
     const gatewayUrl = await listen(gateway.server);
     paywall = await startPaywall(
-      { AVM_PAY_TO: PAY_TO, GATEWAY_URL: gatewayUrl, CHAINAIM_GATEWAY_KEY: KEY, FACILITATOR_URL: facilitatorUrl, PUBLIC_BASE_URL: "https://pay.example.com" },
+      { XRPL_PAY_TO_TESTNET: PAY_TO, GATEWAY_URL: gatewayUrl, CHAINAIM_GATEWAY_KEY: KEY, FACILITATOR_URL_TESTNET: facilitatorUrl, PUBLIC_BASE_URL: "https://pay.example.com" },
       (line) => logs.push(line),
     );
   });
@@ -53,13 +53,16 @@ describe("paywall (TestNet)", () => {
     fetch(`${paywall.url}${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
   const priceOf = async (path: string): Promise<PaymentRequired> => decode((await post(path, { text: "Jane Roe" })).headers.get("payment-required"));
 
-  it("asks for payment with the price, network, payTo, tag and Bazaar metadata", async () => {
-    for (const [path, amount] of [["/v1/privacy/scan", "10000"], ["/v1/privacy/mask", "10000"], ["/v1/chat/completions", "10000"]]) {
+  it("ARCH-004 asks for payment with the price in RLUSD, network, payTo, issuer, invoice, source tag and Bazaar metadata", async () => {
+    for (const [path, amount] of [["/v1/privacy/scan", "0.01"], ["/v1/privacy/mask", "0.01"], ["/v1/chat/completions", "0.01"]]) {
       const r = await post(path, { text: "Jane Roe" });
       assert.equal(r.status, 402, path);
       const required = decode(r.headers.get("payment-required"));
       const a = required.accepts[0];
-      assert.deepEqual([a.scheme, a.network, a.amount, a.asset, a.payTo, a.extra.tag], ["exact", NETWORKS.testnet, amount, "10458941", PAY_TO, CHALLENGE_TAG]);
+      assert.deepEqual([a.scheme, a.network, a.amount, a.asset, a.payTo, a.maxTimeoutSeconds], ["exact", NETWORKS.testnet, amount, DEFAULT_RLUSD_CURRENCY_CODE, PAY_TO, 600]);
+      assert.deepEqual([a.extra.issuer, a.extra.sourceTag], [DEFAULT_RLUSD_ISSUER_TESTNET, 804681468]);
+      assert.match(a.extra.invoiceId, /^[0-9A-F]{32}$/);
+      assert.equal("tag" in a.extra, false);
       assert.equal(required.resource.url, `https://pay.example.com${path}`);
       assert.ok(required.extensions?.bazaar?.info?.input, `${path} carries Bazaar input metadata`);
     }
@@ -105,7 +108,7 @@ describe("paywall (TestNet)", () => {
     const line = JSON.parse(logs[0]);
     assert.deepEqual(
       [line.event, line.route, line.amount, line.asset, line.payer, line.transaction],
-      ["payment_settled", "POST /v1/privacy/mask", "10000", "10458941", "BUYERADDRESS", "TX-STUB-1"],
+      ["payment_settled", "POST /v1/privacy/mask", "0.01", DEFAULT_RLUSD_CURRENCY_CODE, "BUYERADDRESS", "TX-STUB-1"],
     );
     assert.ok(!logs[0].includes("Jane"), "no request text in the payment log");
     assert.equal("decisionId" in line, false, "no decision id in the payment log");
@@ -188,7 +191,7 @@ describe("paywall (TestNet)", () => {
   });
 });
 
-describe("paywall replay guard (O1)", () => {
+describe("paywall invoices (ARCH-013, ARCH-014)", () => {
   const facilitator = stubFacilitator();
   const gateway = stubGateway();
   let now = 1_000_000;
@@ -199,9 +202,9 @@ describe("paywall replay guard (O1)", () => {
     const facilitatorUrl = await listen(facilitator.server);
     const gatewayUrl = await listen(gateway.server);
     paywall = await startPaywall(
-      { AVM_PAY_TO: PAY_TO, GATEWAY_URL: gatewayUrl, CHAINAIM_GATEWAY_KEY: KEY, FACILITATOR_URL: facilitatorUrl, PUBLIC_BASE_URL: "https://pay.example.com" },
+      { XRPL_PAY_TO_TESTNET: PAY_TO, GATEWAY_URL: gatewayUrl, CHAINAIM_GATEWAY_KEY: KEY, FACILITATOR_URL_TESTNET: facilitatorUrl, PUBLIC_BASE_URL: "https://pay.example.com" },
       undefined,
-      { now: () => now, maxReplayEntries: 3 },
+      { now: () => now, maxOpenInvoices: 3 },
     );
   });
   after(async () => {
@@ -218,65 +221,108 @@ describe("paywall replay guard (O1)", () => {
 
   const pay = (payment: string) =>
     fetch(`${paywall.url}${SCAN}`, { method: "POST", headers: { "content-type": "application/json", "payment-signature": payment }, body: JSON.stringify({ text: "Jane Roe" }) });
+  /** Asks for the price; every answer carries a new invoice. */
   const required = async (): Promise<PaymentRequired> =>
     decode((await fetch(`${paywall.url}${SCAN}`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).headers.get("payment-required"));
   const served = () => gateway.seen.filter((s) => s.path === SCAN).length;
-  const group = (label: string) => [Buffer.from(label).toString("base64")];
+  const blob = (label: string) => Buffer.from(label).toString("hex").toUpperCase();
 
-  it("refuses a payment signature it has seen before, without verifying it or calling the gateway", async () => {
-    gateway.state.status = 400; // a refusal: the payment is verified but never settled, so nothing on the chain stops a replay
+  it("ARCH-013 quotes a new invoice id with every price", async () => {
+    const ids = [(await required()).accepts[0].extra.invoiceId, (await required()).accepts[0].extra.invoiceId];
+    for (const id of ids) assert.match(id, /^[0-9A-F]{32}$/);
+    assert.notEqual(ids[0], ids[1]);
+  });
+
+  it("ARCH-014 refuses a payment it has seen before, without verifying it or calling the gateway", async () => {
+    gateway.state.status = 400; // a refusal: the payment is verified but never settled, so nothing on the ledger stops a replay
     const payment = paymentFor(await required());
     assert.equal((await pay(payment)).status, 400);
     assert.equal(served(), 1);
     facilitator.calls.length = 0;
     const replay = await pay(payment);
     assert.equal(replay.status, 402, "the caller is asked to sign a new payment");
-    assert.ok(replay.headers.get("payment-required"), "with the price, so an x402 client can pay again");
+    const again = decode(replay.headers.get("payment-required"));
+    assert.notEqual(again.accepts[0].extra.invoiceId, decode(payment).accepted.extra.invoiceId, "with a new invoice, so an x402 client can pay again");
     assert.deepEqual(facilitator.calls, [], "the replay never reached the facilitator");
     assert.equal(served(), 1, "nor the gateway");
   });
 
-  it("recognises the same signed transactions in a re-encoded payload", async () => {
+  it("ARCH-014 refuses another signed transaction for an invoice that was already presented", async () => {
     const req = await required();
-    const bytes = Buffer.from("signed transaction re-encoded");
-    assert.equal((await pay(paymentFor(req, [bytes.toString("base64")]))).status, 200);
+    assert.equal((await pay(paymentFor(req, blob("first")))).status, 200);
     facilitator.calls.length = 0;
-    const urlSafe = bytes.toString("base64url"); // the same bytes in another alphabet, no padding
-    assert.equal((await pay(paymentFor(req, [urlSafe]))).status, 402);
+    assert.equal((await pay(paymentFor(req, blob("second")))).status, 402);
     assert.deepEqual(facilitator.calls, []);
+    assert.equal(served(), 1);
   });
 
-  it("accepts a different signed transaction straight after", async () => {
-    const req = await required();
-    assert.equal((await pay(paymentFor(req, group("first")))).status, 200);
-    assert.equal((await pay(paymentFor(req, group("second")))).status, 200);
+  it("ARCH-013 accepts a payment for a new invoice straight after", async () => {
+    assert.equal((await pay(paymentFor(await required()))).status, 200);
+    assert.equal((await pay(paymentFor(await required()))).status, 200);
     assert.equal(served(), 2);
   });
 
-  it("lets only one of two simultaneous calls with the same signature through", async () => {
+  it("ARCH-014 lets only one of two simultaneous calls for the same invoice through", async () => {
     gateway.state.delayMs = 300;
-    const payment = paymentFor(await required(), group("simultaneous"));
+    const payment = paymentFor(await required(), blob("simultaneous"));
     const statuses = (await Promise.all([pay(payment), pay(payment)])).map((r) => r.status).sort();
     assert.deepEqual(statuses, [200, 402]);
     assert.equal(served(), 1);
   });
 
-  it("forgets a signature after one hour, longer than any Algorand transaction stays valid", async () => {
+  it("ARCH-013 refuses a payment for an invoice the paywall never issued", async () => {
     const req = await required();
-    const payment = paymentFor(req, group("forgotten"));
-    assert.equal((await pay(payment)).status, 200);
-    now += 3_599_000;
-    assert.equal((await pay(payment)).status, 402, "still remembered just before the hour");
-    now += 2_000;
-    assert.equal((await pay(payment)).status, 200, "forgotten after it");
+    req.accepts[0].extra.invoiceId = "0123456789ABCDEF0123456789ABCDEF";
+    facilitator.calls.length = 0;
+    assert.equal((await pay(paymentFor(req))).status, 402);
+    assert.deepEqual(facilitator.calls, []);
+    assert.equal(served(), 0);
   });
 
-  it("keeps a bounded number of signatures, dropping the oldest first", async () => {
-    const req = await required(); // the guard holds 3 here
-    const [a, b, c, d] = ["a", "b", "c", "d"].map((l) => paymentFor(req, group(`bounded ${l}`)));
-    for (const p of [a, b, c, d]) assert.equal((await pay(p)).status, 200);
-    assert.equal((await pay(d)).status, 402, "the newest is still remembered");
-    assert.equal((await pay(a)).status, 200, "the oldest was dropped to make room");
+  it("ARCH-013 keeps an invoice open for XRPL_MAX_TIMEOUT_SECONDS and no longer", async () => {
+    const inTime = paymentFor(await required());
+    now += 599_000;
+    assert.equal((await pay(inTime)).status, 200, "still open just before ten minutes");
+    const late = paymentFor(await required());
+    now += 601_000;
+    facilitator.calls.length = 0;
+    assert.equal((await pay(late)).status, 402, "expired after it");
+    assert.deepEqual(facilitator.calls, []);
+  });
+
+  it("ARCH-013 keeps a bounded number of open invoices, dropping the oldest first", async () => {
+    const [a, , , d] = [await required(), await required(), await required(), await required()].map((r) => paymentFor(r)); // the book holds 3 here
+    assert.equal((await pay(d)).status, 200, "the newest is still open");
+    assert.equal((await pay(a)).status, 402, "the oldest was dropped to make room");
+  });
+
+  it("ARCH-017 accepts a PAYMENT-SIGNATURE header built by the x402-xrpl client SDK from this paywall's PAYMENT-REQUIRED header", async () => {
+    const { buildPaymentSignatureHeaderForSignedBlob, decodePaymentRequiredHeader, invoiceIdToInvoiceIdField } = await import("x402-xrpl");
+    const { Wallet } = await import("xrpl");
+    const unpaid = await fetch(`${paywall.url}${SCAN}`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    const req = decodePaymentRequiredHeader(unpaid.headers.get("payment-required")!).accepts[0];
+    const extra = req.extra as { issuer: string; invoiceId: string; sourceTag: number };
+    // Signed offline by a key made for this test: nothing is submitted to any ledger.
+    const buyer = Wallet.generate();
+    const amount = { currency: req.asset, issuer: extra.issuer, value: req.amount };
+    const signed = buyer.sign({
+      TransactionType: "Payment",
+      Account: buyer.classicAddress,
+      Destination: req.payTo,
+      Amount: amount,
+      SendMax: amount,
+      InvoiceID: await invoiceIdToInvoiceIdField(extra.invoiceId),
+      SourceTag: extra.sourceTag,
+      Sequence: 1,
+      Fee: "12",
+      LastLedgerSequence: 100,
+    });
+    facilitator.calls.length = 0;
+    const header = buildPaymentSignatureHeaderForSignedBlob({ req, signedTxBlob: signed.tx_blob, invoiceId: extra.invoiceId });
+    const paid = await pay(header);
+    assert.equal(paid.status, 200);
+    assert.deepEqual(facilitator.calls, ["/verify", "/settle"]);
+    assert.equal((await pay(header)).status, 402, "and only once");
   });
 });
 
@@ -286,11 +332,12 @@ describe("paywall (MainNet)", () => {
   let paywall: { url: string; close: () => Promise<void> };
   before(async () => {
     paywall = await startPaywall({
-      AVM_PAY_TO: PAY_TO,
+      XRPL_NETWORK: "mainnet",
+      XRPL_PAY_TO_MAINNET: PAY_TO,
+      RLUSD_ISSUER_MAINNET: ISSUER,
       GATEWAY_URL: await listen(gateway.server),
       CHAINAIM_GATEWAY_KEY: KEY,
-      FACILITATOR_URL: await listen(facilitator.server),
-      X402_NETWORK: "mainnet",
+      FACILITATOR_URL_MAINNET: await listen(facilitator.server),
     });
   });
   after(async () => {
@@ -299,19 +346,19 @@ describe("paywall (MainNet)", () => {
     await close(gateway.server);
   });
 
-  it("prices in MainNet USDC (ASA 31566704)", async () => {
+  it("ARCH-010 prices in MainNet RLUSD from the MainNet issuer", async () => {
     const r = await fetch(`${paywall.url}/v1/privacy/scan`, { method: "POST", headers: { "content-type": "application/json" }, body: '{"text":"hi"}' });
     const a = decode(r.headers.get("payment-required")).accepts[0];
-    assert.deepEqual([a.network, a.asset, a.amount], [NETWORKS.mainnet, "31566704", "10000"]);
+    assert.deepEqual([a.network, a.asset, a.amount, a.extra.issuer], [NETWORKS.mainnet, DEFAULT_RLUSD_CURRENCY_CODE, "0.01", ISSUER]);
   });
 });
 
 describe("main", () => {
   it("exits with a clear message when the configuration is missing", () => {
     const cwd = fileURLToPath(new URL("../", import.meta.url));
-    const env = { ...process.env, AVM_PAY_TO: "", GATEWAY_URL: "", CHAINAIM_GATEWAY_KEY: "" };
+    const env = { ...process.env, XRPL_NETWORK: "", XRPL_PAY_TO_TESTNET: "", GATEWAY_URL: "", CHAINAIM_GATEWAY_KEY: "" };
     const r = spawnSync(process.execPath, ["src/main.ts"], { cwd, env, encoding: "utf8" });
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /AVM_PAY_TO is required/);
+    assert.match(r.stderr, /XRPL_PAY_TO_TESTNET is required/);
   });
 });
