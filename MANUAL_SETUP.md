@@ -55,3 +55,13 @@ No new environment variable: `services/web` still reads only `PAYWALL_URL`, `POR
 3. Start the paywall and the web app, open the page, click **Connect Crossmark**, mask a message and press **Execute**. This is the first time the Crossmark path runs for real; the agent could only test it with a stand-in.
 4. On Vercel, redeploy `services/web` so the new `public/wallet.js` and security headers go live.
 5. Review the disclaimer sentence in `services/web/public/index.html` that now names "Ripple, the XRPL Foundation".
+
+## 2026-10-21 — owner steps on TestNet: done (details in STATE.md, section of the same date)
+
+- Item 2 of the first list (`*.t54.ai` behind Sophos): not needed on this PC's network; the facilitator answered `/supported` from the host and from `ca-paywall`.
+- "Owner steps on TestNet" 1 to 5: done. payTo `rn5hSy7QvsrQLpGb3k5dp4h8Yrk9J7gBej`, buyer `rMosbGSCHTWnZmdgyhVETxSDRdPnormKxR`; both funded and with RLUSD trust lines. First settled payment: tx `E55B67292C6DAFE7CC07060477FA5E65E38DCFCE8257AD8B0D5590EF8BE8400A`.
+- Step 2 (faucet): the web page did not fund an existing address; use the faucet API instead, one address at a time:
+  `Invoke-RestMethod -Method Post -Uri https://faucet.altnet.rippletest.net/accounts -ContentType application/json -Body (@{destination='r...'; userAgent='xrpl.js'} | ConvertTo-Json)`
+- Step 4 (RLUSD): tryrlusd.com sent RLUSD to the owner's own account; 1 RLUSD was then sent to the buyer from Crossmark (open the RLUSD token, then its Send, so the amount is RLUSD and not XRP).
+- Entering a seed in PowerShell: use a standalone PowerShell window and paste with a right-click. In the VS Code terminal, or with Ctrl+V at a hidden prompt, the paste becomes one control character (one `*` at the prompt).
+- Still to do: "web page on Crossmark" steps 1 to 5 (the page itself has not been run).

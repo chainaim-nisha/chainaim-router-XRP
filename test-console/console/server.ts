@@ -28,6 +28,14 @@
  *   --analyst URL       the analyst for "03 Private chat + analysis" (default http://127.0.0.1:8740; services/analyst,
  *                       started by start-analyst.cmd). Only its known routes are forwarded, as JSON.
  *
+ *   Paid chat ("Pay with Crossmark" box on the chat tab): the browser pays the paywall's chat price from its own
+ *   Crossmark wallet with the web page's bundle (services/web, payAndChat). This server serves the bundle and
+ *   relays /paid/chat to the PAYWALL with the payment header; it never adds the gateway key there and logs
+ *   neither the text nor the payment.
+ *   --wallet-bundle PATH  the browser payment bundle (default ../../services/web/public/wallet.js;
+ *                         build it with npm --prefix services/web run build:wallet)
+ *   --paid-timeout-sec N  how long a paid chat may take, quote, settle and answer together (default 240)
+ *
  *   Pages are served at /view/<id> with a sandbox Content-Security-Policy: their scripts run in an opaque
  *   origin and connect-src is 'none', so model-written HTML cannot call this console, the gateway or any
  *   other address. Pages live in memory only (they can hold statement data) and vanish on restart.
@@ -42,6 +50,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { NETWORKS } from "../../services/web/src/balance.ts";
 
 const { values: flags } = parseArgs({
   args: process.argv.slice(2),
@@ -60,9 +69,11 @@ const { values: flags } = parseArgs({
     "view-ttl-min": { type: "string", default: "60" },
     "view-max-bytes": { type: "string", default: "1000000" },
     "view-script-src": { type: "string", default: "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com" },
+    "wallet-bundle": { type: "string", default: fileURLToPath(new URL("../../services/web/public/wallet.js", import.meta.url)) },
+    "paid-timeout-sec": { type: "string", default: "240" },
   },
 });
-function positiveInt(name: "view-max" | "view-ttl-min" | "view-max-bytes"): number {
+function positiveInt(name: "view-max" | "view-ttl-min" | "view-max-bytes" | "paid-timeout-sec"): number {
   const n = Number(flags[name]);
   if (!Number.isInteger(n) || n < 1) throw new Error(`--${name} must be a positive integer, got ${flags[name]}`);
   return n;
@@ -71,6 +82,10 @@ const VIEW_MAX = positiveInt("view-max");
 const VIEW_TTL_MS = positiveInt("view-ttl-min") * 60_000;
 const VIEW_MAX_BYTES = positiveInt("view-max-bytes");
 const VIEW_SOURCES = flags["view-script-src"]!.split(/\s+/).filter(Boolean);
+const PAID_TIMEOUT_MS = positiveInt("paid-timeout-sec") * 1000;
+const WALLET_BUNDLE = flags["wallet-bundle"]!;
+/** Paywall response headers the paid chat passes back: the price, the receipt, retry advice and the gateway's own. */
+const PAID_PASS_BACK = /^(payment-required|payment-response|retry-after|x-chainaim-[a-z-]+)$/;
 for (const s of VIEW_SOURCES) {
   if (!URL.canParse(s) || new URL(s).protocol !== "https:" || new URL(s).origin !== s.replace(/\/+$/, "")) throw new Error(`--view-script-src entries must be https origins like https://cdn.jsdelivr.net, got ${s}`);
 }
@@ -345,6 +360,65 @@ createServer(async (req, res) => {
       }
       res.writeHead(r.status, { "content-type": "application/json", ...dataHeaders });
       res.end(await r.text());
+      return;
+    }
+    // ---- Paid chat ---------------------------------------------------------------------------------------------
+    // The browser bundle that pays from the visitor's Crossmark wallet (services/web/public/wallet.js).
+    if (api === "wallet.js" && req.method === "GET") {
+      let js: Buffer;
+      try { js = readFileSync(WALLET_BUNDLE); } catch { return json(res, 404, { error: `the wallet bundle is not at ${WALLET_BUNDLE}: run npm --prefix services/web run build:wallet` }); }
+      res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache", "x-content-type-options": "nosniff" });
+      res.end(js);
+      return;
+    }
+    // What the paid chat pays on, from the paywall's own chat quote, with the public ledger server for that network.
+    if (api === "paid" && name === "network" && req.method === "GET") {
+      if (!hostOk(req)) return dataJson(res, 403, { error: `open the console as http://127.0.0.1:${PORT}` });
+      const r = await fetch(PAYWALL + ROUTES.chat, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] }), signal: AbortSignal.timeout(8000) });
+      const header = r.headers.get("payment-required");
+      if (r.status !== 402 || !header) return json(res, 503, { error: `the paywall did not quote a chat price (HTTP ${r.status}): ${(await r.text()).slice(0, 200)}` });
+      const a = JSON.parse(Buffer.from(header, "base64").toString("utf8")).accepts?.[0] as Record<string, any> | undefined;
+      const known = Object.entries(NETWORKS).find(([, n]) => n.caip2 === a?.network);
+      if (!a || !known || typeof a.extra?.issuer !== "string" || typeof a.asset !== "string") return json(res, 502, { error: `the paywall quotes a network or shape this console does not know (${a?.network ?? "none"})` });
+      json(res, 200, { name: known[0], caip2: known[1].caip2, wsUrl: known[1].wsUrl, asset: a.asset, issuer: a.extra.issuer, payTo: a.payTo, price: Number(a.amount) });
+      return;
+    }
+    // The paid chat itself, relayed to the paywall (not the gateway, and without the gateway key) with the payment header.
+    if (api === "paid" && name === "chat" && req.method === "POST") {
+      if (!hostOk(req)) return dataJson(res, 403, { error: `open the console as http://127.0.0.1:${PORT}` });
+      if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) return json(res, 415, { error: { message: "send application/json" } });
+      const signature = req.headers["payment-signature"];
+      if (Array.isArray(signature)) return json(res, 400, { error: { message: "send one payment-signature header" } });
+      const body = await readBody(req);
+      const started = Date.now();
+      let r: Response;
+      try {
+        r = await fetch(PAYWALL + ROUTES.chat, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...(signature ? { "payment-signature": signature } : {}) },
+          body,
+          signal: AbortSignal.timeout(PAID_TIMEOUT_MS),
+        });
+      } catch {
+        // Once a payment was forwarded, the paywall may have settled it before the connection failed.
+        return json(res, 502, { error: { message: signature ? "The connection to the paywall failed after your payment was sent. Check your wallet's recent transactions before trying again." : "Could not reach the paywall. You were not charged." } });
+      }
+      const headers: Record<string, string> = { "content-type": r.headers.get("content-type") ?? "application/json", "cache-control": "no-store" };
+      r.headers.forEach((value, key) => { if (PAID_PASS_BACK.test(key)) headers[key] = value; });
+      let out: Buffer;
+      try {
+        out = Buffer.from(await r.arrayBuffer());
+      } catch {
+        // The paywall settles before it streams the answer, so a paid body lost here may already be paid for.
+        const receipt = headers["payment-response"];
+        res.writeHead(502, { "content-type": "application/json", ...(receipt ? { "payment-response": receipt } : {}) });
+        res.end(JSON.stringify({ error: { message: signature ? "The answer was lost after your payment went through. Check your wallet's recent transactions before trying again." : "Could not read the paywall's answer. You were not charged." } }));
+        return;
+      }
+      // Status and timing only: never the text, the payment header or the receipt.
+      console.log(JSON.stringify({ ts: new Date().toISOString(), route: "paid-chat", status: r.status, withPayment: signature !== undefined, ms: Date.now() - started }));
+      res.writeHead(r.status, headers);
+      res.end(out);
       return;
     }
     if (api === "leaving") {

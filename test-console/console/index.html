@@ -112,6 +112,7 @@ label.drop b { font: 500 13.5px/1.3 var(--sans); }
 .err { font: 400 12px/1.55 var(--mono); color: var(--warn); }
 
 .row-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.paybox { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-weight: 600; cursor: pointer; }
 button { margin: 0; border: 1px solid var(--btn); background: var(--btn); color: var(--btn-ink); font: 600 13.5px/1 var(--sans); padding: 11px 18px; border-radius: 3px; cursor: pointer; }
 button:hover { opacity: .88; }
 button.ghost { border-color: var(--rule-firm); background: transparent; color: var(--ink-2); font-weight: 500; }
@@ -256,6 +257,8 @@ footer.fine { margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--r
           <label class="blabel" for="model">Model</label>
           <select id="model"><option value="">loading the models…</option></select>
           <span class="muted" id="modelInfo">Every Send uses the model picked here until you pick another.</span>
+          <label class="paybox"><input type="checkbox" id="payMode"> Pay with Crossmark (x402, RLUSD on XRPL TestNet)</label>
+          <span class="muted" id="payInfo">Off: Send goes straight to the gateway with the test key, and nothing is paid.</span>
           <div class="row-actions">
             <button id="send">Send ($0.01)</button>
             <button class="ghost" id="newConv" type="button">New conversation</button>
@@ -953,6 +956,57 @@ function viewLinks(views) {
     el("span", { className: "muted", textContent: `Runs sandboxed (no network calls). Kept in the console's memory${minutes ? ` for ${minutes} min` : ""} or until it restarts.` }));
 }
 
+/* ---------- Paid chat: "Pay with Crossmark" ---------- */
+// The web page's payment bundle (services/web, payAndChat), served by this console at /wallet.js and loaded only when the
+// box is ticked, so the unpaid console works without it. Crossmark signs each payment; this page and its server hold no key.
+// Paid Sends go to /paid/chat, which relays to the PAYWALL (not the gateway key), so each one is a real x402 payment.
+let walletMod = null, paidNet = null, payer = null;
+async function wallet() { return walletMod ??= await import("/wallet.js"); }
+async function paidNetwork() {
+  const r = await fetch("/paid/network");
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error ?? `The paywall's chat price could not be read (HTTP ${r.status}).`);
+  return j;
+}
+const explorer = (n) => `https://${n?.name === "mainnet" ? "livenet" : "testnet"}.xrpl.org`;
+function payInfo(text, isErr = false) { const p = $("payInfo"); p.textContent = text; p.className = isErr ? "err" : "muted"; }
+async function refreshPayer() {
+  if (!$("payMode").checked) { payInfo("Off: Send goes straight to the gateway with the test key, and nothing is paid."); return; }
+  try {
+    const w = await wallet();
+    paidNet = await paidNetwork();
+    const saved = w.savedAccount();
+    payer = saved && saved.caip2 === paidNet.caip2 ? saved.address : null;
+    if (!payer) { payInfo(`On: each Send pays ${paidNet.price} RLUSD on ${paidNet.name} to ${paidNet.payTo}. The first Send connects Crossmark.`); return; }
+    let bal = "";
+    try { const b = await w.balance(payer, paidNet); bal = ` (${b.rlusd} RLUSD${b.trustLineOpen ? "" : ", no RLUSD trust line"})`; } catch { /* the ledger server is down: the paywall decides */ }
+    payInfo(`On: each Send pays ${paidNet.price} RLUSD on ${paidNet.name} from ${payer}${bal} to ${paidNet.payTo}.`);
+  } catch (e) { payInfo(e.message, true); }
+}
+$("payMode").onchange = refreshPayer;
+
+/** One paid Send: the same shape as call("/gateway/chat") plus the receipt, or null when this press only connected Crossmark. */
+async function paidChat(body) {
+  const w = await wallet();
+  paidNet = await paidNetwork();
+  if (!payer) {
+    payer = await w.connect(paidNet.caip2);
+    await refreshPayer();
+    alert("Crossmark is connected. Press Send again to pay: Crossmark will ask you to approve the payment.");
+    return null;
+  }
+  payInfo("Approve the payment in Crossmark…");
+  const a = await w.payAndChat(payer, paidNet, body, "/paid/chat", () => payInfo("Payment approved, waiting for the answer…"));
+  refreshPayer();
+  if (a.error) return { status: a.status, headers: {}, body: { error: { message: a.error } }, transaction: a.transaction ?? null };
+  return {
+    status: 200,
+    headers: { ...(a.model ? { "x-chainaim-model": a.model } : {}), ...(a.dataClass ? { "x-chainaim-data-class": a.dataClass } : {}) },
+    body: { choices: [{ message: { content: a.answer } }] },
+    transaction: a.payment.transaction,
+  };
+}
+
 $("send").onclick = () => busy($("send"), async () => {
   const before = await call("/leaving");
   const last = before.length ? before[before.length - 1].at : "";
@@ -966,7 +1020,9 @@ $("send").onclick = () => busy($("send"), async () => {
   // Refuse here, with the numbers, rather than letting the gateway reject a prompt that cannot fit the picked model.
   const total = nextChars(), room = promptRoom();
   if (total > room) { updateSize(); return alert(`This question would send ${total.toLocaleString()} characters; ${pickedModel ?? "the model"} takes about ${room.toLocaleString()}. Remove data, untick earlier answers, use Pick files, or pick a model with more room.`); }
-  const r = await call("/gateway/chat", { ...(pickedModel ? { model: pickedModel } : {}), messages: buildMessages(question) });
+  const chatBody = { ...(pickedModel ? { model: pickedModel } : {}), messages: buildMessages(question) };
+  const r = $("payMode").checked ? await paidChat(chatBody) : await call("/gateway/chat", chatBody);
+  if (!r) return; // this press only connected Crossmark
   await new Promise((ok) => setTimeout(ok, 400));
   const after = (await call("/leaving")).filter((s) => s.at > last);
   const out = $("chatOut"); out.replaceChildren();
@@ -990,6 +1046,10 @@ $("send").onclick = () => busy($("send"), async () => {
     renderTurns();
     updateSize();
   }
+  // A paid Send shows its receipt, also when the answer failed after the payment settled.
+  if (r.transaction) out.append(block(el("span", { className: "blabel", textContent: "Payment" }),
+    el("p", {}, `Paid ${paidNet?.price ?? ""} RLUSD on ${paidNet?.name ?? "the XRP Ledger"} · receipt `,
+      el("a", { href: `${explorer(paidNet)}/transactions/${r.transaction}`, target: "_blank", rel: "noopener", textContent: `${r.transaction.slice(0, 8)}…${r.transaction.slice(-6)} ↗` }))));
   const model = after.filter((s) => s.kind === "model");
   const jev = after.filter((s) => s.kind === "jev");
   // An answered chat that the stand-in never saw means the real models are on: these two panels only record the stand-in.

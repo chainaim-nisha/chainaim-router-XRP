@@ -41,7 +41,17 @@ export function within<T>(p: Promise<T>, ms: number, message: string): Promise<T
   return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }
 
-export async function payWith(deps: PayDeps, address: string, net: PayNetwork, masked: string, maxTokens = 512): Promise<Answer | Failure> {
+/** The page's paid chat call: one masked user message. */
+export function payWith(deps: PayDeps, address: string, net: PayNetwork, masked: string, maxTokens = 512): Promise<Answer | Failure> {
+  return payForChat(deps, address, net, { model: "chainaim/auto", messages: [{ role: "user", content: masked }], max_tokens: maxTokens });
+}
+
+/**
+ * One paid chat call with any body the paywall's chat route accepts: the test
+ * console sends a whole conversation and the model it picked. The body goes out
+ * unchanged, both to ask the price and with the payment.
+ */
+export async function payForChat(deps: PayDeps, address: string, net: PayNetwork, body: Record<string, unknown>): Promise<Answer | Failure> {
   const timeoutMessage = SIGN_TIMEOUT;
   let signed = false;
   const inner = crossmarkSigner(address, (tx) => within(deps.signAndWait(tx), deps.signMs ?? SIGN_MS, timeoutMessage));
@@ -64,7 +74,7 @@ export async function payWith(deps: PayDeps, address: string, net: PayNetwork, m
     deps.fetch(deps.chatUrl ?? "/api/chat", {
       method: "POST",
       headers: { "content-type": "application/json", ...(payment ? { "PAYMENT-SIGNATURE": payment } : {}) },
-      body: JSON.stringify({ model: "chainaim/auto", messages: [{ role: "user", content: masked }], max_tokens: maxTokens }),
+      body: JSON.stringify(body),
     });
   let r: Response;
   try {

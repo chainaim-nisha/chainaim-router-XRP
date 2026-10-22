@@ -4,10 +4,20 @@
  * functions from /wallet.js. Only the address and its network's CAIP-2 id are
  * kept in localStorage; Crossmark keeps the keys.
  */
-import crossmark from "@crossmarkio/sdk";
+import { modules } from "@crossmarkio/sdk";
 import type { Answer, Failure } from "./answer.ts";
 import { readBalance, type Balance } from "./balance.ts";
-import { NO_CROSSMARK, payWith, within, type PayNetwork } from "./pay.ts";
+import { NO_CROSSMARK, payForChat, payWith, within, type PayNetwork } from "./pay.ts";
+
+/**
+ * The Crossmark Sdk instance. The SDK's own entry sets its default export to
+ * modules.xmark, but this package is "type": "module", so esbuild bundles a
+ * default import of the SDK's CommonJS/UMD build the way Node does: the default
+ * becomes the whole exports object, which has no .async. The named export is
+ * the same instance under both interop rules. test/wallet-bundle.test.ts checks
+ * the built bundle reaches Crossmark this way.
+ */
+const crossmark = modules.xmark;
 
 export type { PayNetwork };
 
@@ -61,4 +71,13 @@ export const balance = (address: string, net: PayNetwork): Promise<Balance> => r
 
 export function payAndAsk(address: string, net: PayNetwork, masked: string, maxTokens = 512, onSigned?: () => void): Promise<Answer | Failure> {
   return payWith({ signAndWait: (tx) => crossmark.async.signAndWait(tx as never), fetch: (input, init) => fetch(input, init), onSigned }, address, net, masked, maxTokens);
+}
+
+/**
+ * The test console's paid chat (test-console/console): any chat body the
+ * paywall accepts, sent to chatUrl, which relays it to the paywall. Same
+ * payment, signing and money rules as payAndAsk.
+ */
+export function payAndChat(address: string, net: PayNetwork, body: Record<string, unknown>, chatUrl: string, onSigned?: () => void): Promise<Answer | Failure> {
+  return payForChat({ signAndWait: (tx) => crossmark.async.signAndWait(tx as never), fetch: (input, init) => fetch(input, init), onSigned, chatUrl }, address, net, body);
 }

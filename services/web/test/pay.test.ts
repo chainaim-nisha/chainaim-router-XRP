@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { LedgerError, type LedgerRequest } from "../src/balance.ts";
-import { AFTER_APPROVAL, payWith, SIGN_TIMEOUT, type PayDeps, type PayNetwork } from "../src/pay.ts";
+import { AFTER_APPROVAL, payForChat, payWith, SIGN_TIMEOUT, type PayDeps, type PayNetwork } from "../src/pay.ts";
 import { CANCELLED, NOT_SIGNED, type SignReply, type XrplTransaction } from "../src/crossmark-signer.ts";
 import { NOT_ON_LEDGER } from "../src/xrpl-payment.ts";
 
@@ -51,6 +51,24 @@ describe("payWith", () => {
     assert.equal(signedCalls, 1);
     assert.equal(route.seen.length, 2);
     assert.deepEqual(JSON.parse(await route.seen[1].text()), { model: "chainaim/auto", messages: [{ role: "user", content: "Hi <C_PERSON_1>" }], max_tokens: 512 });
+  });
+
+  it("payForChat sends the console's whole conversation and picked model unchanged, both times, and pays once", async () => {
+    const body = {
+      model: "qwen/qwen2.5-3b",
+      messages: [
+        { role: "user", content: "data: a,b\nQ1" },
+        { role: "assistant", content: "A1" },
+        { role: "user", content: "Q2" },
+      ],
+    };
+    const route = chatRoute(() => new Response(ANSWER, { headers: { "payment-response": b64({ success: true, transaction: "TX2", network: TESTNET }) } }));
+    let signs = 0;
+    const a = await payForChat(deps({ fetch: route.fetcher, chatUrl: "http://console.test/paid/chat", signAndWait: async () => (signs++, signedBy({ txBlob: SIGNED_BLOB })) }), BUYER, NET, body);
+    assert.equal(signs, 1);
+    assert.deepEqual(route.seen.map((r) => r.url), ["http://console.test/paid/chat", "http://console.test/paid/chat"]);
+    for (const req of route.seen) assert.deepEqual(JSON.parse(await req.text()), body);
+    assert.deepEqual(a, { answer: "Hi <C_PERSON_1>", model: null, dataClass: null, payment: { transaction: "TX2", network: TESTNET } });
   });
 
   it("ARCH-016 asks Crossmark to sign one RLUSD Payment for the quoted price, and sends it with the offer and the invoice", async () => {

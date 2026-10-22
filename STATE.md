@@ -64,3 +64,39 @@ Evidence for everything below is in `BUILD_LOG.md`. Owner steps are in `MANUAL_S
 ## Next step
 
 Owner: `MANUAL_SETUP.md`, "Owner steps on TestNet", then one real payment with `scripts/pay.ts`, then one in the browser with Crossmark.
+
+## 2026-10-21 — TestNet proof (owner run, repo `chainaim-router`, branch `integrate-xrpl`)
+
+Run by the owner on the CPU-only Windows PC, steps given one at a time by Claude. Evidence is the command output quoted in that session; public addresses and hashes only, no seeds.
+
+**Gap 1 closed: a real payment settled.**
+- `node scripts/pay.ts http://127.0.0.1:8080/v1/privacy/scan --text "Patient Jane Roe, MRN 991122, was diagnosed with diabetes."` → `HTTP 200`, real Presidio scan result (dataClass PHI), `payment {"success":true,"transaction":"E55B67292C6DAFE7CC07060477FA5E65E38DCFCE8257AD8B0D5590EF8BE8400A","network":"xrpl:1",...}` with a t54 attestation extension (`environment rewards-testnet`, `nonProduction true`, `status ready`).
+- `docker logs ca-paywall` → `payment_settled`, `POST /v1/privacy/scan`, amount `0.01`, asset RLUSD, `xrpl:1`, the same transaction.
+- testnet.xrpl.org → Payment 0.01 RLUSD (issuer `rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV`) from the buyer to payTo, SourceTag `804681468`, ledger 21715209, 2026-10-21 18:26:01 UTC.
+- So t54 accepts the `@x402/core` verify/settle body, and `/supported` lists `exact` on `xrpl:1`.
+
+**Gap 4, Open Question 3 closed:** `https://xrpl-facilitator-testnet.t54.ai/supported` answered from the host and from inside `ca-paywall` with kinds `exact`, `upto`, `batch-settlement` on `xrpl:1`. The Sophos re-signing does not apply on this PC's network (it may still apply on the network where it was first seen). Open Question 4 (Bazaar listing on t54) is still not checked.
+
+**Gap 3 closed for `new-account.ts`, `trust-line.ts`, `pay.ts`:** all ran to success on funded TestNet accounts. `send-xrp.ts` and `private-ask.ts` were not run.
+
+**Gap 2 narrowed, not closed:** the Crossmark extension (TestNet) signed and submitted a plain 1 RLUSD Payment to the buyer. The ChainAim web page adapter (`services/web`, Connect Crossmark → Execute) has still never run in a browser.
+
+Accounts (TestNet, public addresses):
+
+| Role | Address | State |
+|---|---|---|
+| payTo (in `ca-paywall` as `XRPL_PAY_TO_TESTNET`) | `rn5hSy7QvsrQLpGb3k5dp4h8Yrk9J7gBej` | 100 XRP from faucet (tx `A37CC8A9F3F327078FAD1ADC3F316A1F7FD44988F70FD1251C7BECE4D6F80EA0`), RLUSD trust line (tx `923754D08B8D09A123F869255AEE6377A0339517373B723E09E7939A6DBB47FB`), received 0.01 RLUSD |
+| Buyer for `pay.ts` | `rMosbGSCHTWnZmdgyhVETxSDRdPnormKxR` | 100 XRP from faucet (tx `025715056DA029AFC9B9169FC87884D56D4FB563CCBBB3850AFAED628FCC0EB8`), RLUSD trust line (tx `B0BA7C9E909055846FA574805E14F137D1713BCB9999C6A90E3171977D59E4B8`), got 1 RLUSD from Crossmark, paid 0.01 |
+| Owner's Crossmark account | `rn4QHduCAXzkEgC1nPdUno5rWfxZarJw1a` | Holds RLUSD; sent 1 RLUSD to the buyer |
+| Owner's other account | `rnfBRWuxpLnFaQUbAAjgZ1szhzRUSsPkGU` | Held 5.03 RLUSD when checked; not used |
+
+Seeds are in the owner's password manager only.
+
+Notes found on the way:
+- The XRPL faucet web page did not fund the existing payTo address; the faucet API did: `POST https://faucet.altnet.rippletest.net/accounts` with `{"destination":"r...","userAgent":"xrpl.js"}` (host and path from `xrpl/dist/npm/Wallet/defaultFaucets.js`, body from `client/index.js` `fundWallet`).
+- `new-account.ts` makes Ed25519 keys: the family seed starts `sEd` and is 31 characters.
+- The scripts load the repository `.env` through `src/env.ts`; a value set in the shell wins. The services do not read `.env`.
+- `ca-paywall` was recreated from image `chainaim-paywall:test` with `-e XRPL_NETWORK=testnet -e XRPL_PAY_TO_TESTNET=... -e GATEWAY_URL=http://gateway.railway.internal:8700 -e CHAINAIM_GATEWAY_KEY` on network `chainaim-test`; `RUN-ON-ANOTHER-PC.md` step 6 still shows the old Algorand `docker run` and needs this update.
+- A test console process started before the merge showed the price as `1e-8` with no issuer or invoice; after restarting it the 03 Payment section shows 0.01 RLUSD, the issuer, payTo and the invoice.
+
+Still open: the Crossmark web page payment; Open Question 4 (Bazaar); `RUN-ON-ANOTHER-PC.md` step 6 update; committing the untracked CPU config files; merging `integrate-xrpl` into `main` (nothing pushed).
