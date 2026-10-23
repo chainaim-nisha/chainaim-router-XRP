@@ -17,8 +17,14 @@ describe("shapeBody", () => {
       provider: { data_collection: "allow" }, models: ["a"], route: "fallback", transforms: [], plugins: [],
       user: "jane.roe@example.com", metadata: { who: "Jane Roe" }, prediction: { type: "content", content: "Jane Roe" },
     };
-    const body = shapeBody(request, [{ role: "user", content: "hi" }], 1024);
-    assert.deepEqual(body, { messages: [{ role: "user", content: "hi" }], max_tokens: 1024, tools: [1], temperature: 0.2, stop: ["x"] });
+    const body = shapeBody(request, [{ role: "user", content: "hi" }], 1024, { tools: ["masked tools"], stop: ["masked stop"] });
+    assert.deepEqual(body, { messages: [{ role: "user", content: "hi" }], max_tokens: 1024, tools: ["masked tools"], temperature: 0.2, stop: ["masked stop"] });
+  });
+
+  it("never copies tools, response_format or stop from the request: a field with no masked form is left out", () => {
+    const request = { tools: [{ type: "function", function: { name: "f", description: "Jane Roe" } }], response_format: { type: "json_object" }, stop: ["Jane Roe"], seed: 7 };
+    const body = shapeBody(request, [], 16, {});
+    assert.deepEqual(body, { messages: [], max_tokens: 16, seed: 7 });
   });
 });
 

@@ -20,6 +20,7 @@ import { classify, countTypes } from "./privacy/classify.ts";
 import type { Detected } from "./privacy/entities.ts";
 import { Masker } from "./privacy/mask.ts";
 import { PresidioError } from "./privacy/presidio.ts";
+import { DEFAULT_RESIDUAL, residualHits } from "./privacy/residual.ts";
 
 /** Scan and mask accept a text of 1 to this many characters. */
 export const MAX_TEXT_CHARS = 20_000;
@@ -104,10 +105,12 @@ export function createGateway(deps: GatewayDeps, opts: ServerOptions): Server {
     }
     const masker = new Masker();
     const maskedText = masker.mask(text, entities);
+    // What the chat's residual check would refuse in this masked text (kinds and counts), so a caller can see it before sending.
+    const residual = residualHits([maskedText], deps.chat.residual ?? DEFAULT_RESIDUAL);
     sendJson(
       res,
       200,
-      { decisionId, dataClass: classes.dataClass, found: classes.found, maskedText, map: masker.map, counts, cardsRemoved: masker.cardsRemoved },
+      { decisionId, dataClass: classes.dataClass, found: classes.found, maskedText, map: masker.map, counts, cardsRemoved: masker.cardsRemoved, residual },
       headers,
     );
     ledger.write({ ...entry, ...found, cardsRemoved: masker.cardsRemoved, status: 200, latencyMs: latencyMs() });
@@ -136,6 +139,7 @@ export function createGateway(deps: GatewayDeps, opts: ServerOptions): Server {
     headers["x-chainaim-data-class"] = result.record.dataClass ?? "none";
     headers["x-chainaim-classifier"] = result.record.classifier ?? "rules";
     headers["x-chainaim-model"] = result.record.served ?? "";
+    headers["x-chainaim-restored"] = result.record.restored === false ? "no" : "yes";
     if (!result.stream) {
       sendJson(res, 200, result.completion, headers);
       return;

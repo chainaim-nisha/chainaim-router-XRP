@@ -304,6 +304,9 @@ const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.crea
 const label = (t) => el("div", { className: "label", textContent: t });
 const pre = (t) => el("pre", { textContent: typeof t === "string" ? t : JSON.stringify(t, null, 2) });
 const pill = (t, cls = "") => el("span", { className: "pill " + cls, textContent: t });
+// Private chat answers keep the placeholders (<PERSON_1>, <BANK_ACCOUNT_1>, ...) the model was given: the gateway is asked
+// not to put the real values back (chainaim_restore: false). Set to false to show answers with the real values restored.
+const KEEP_PLACEHOLDERS = true;
 const withPlaceholders = (text) => {
   const box = el("div", { className: "box" });
   for (const part of String(text).split(/(<[A-Z_]+_\d+>|\[CARD REMOVED\])/)) {
@@ -1020,7 +1023,8 @@ $("send").onclick = () => busy($("send"), async () => {
   // Refuse here, with the numbers, rather than letting the gateway reject a prompt that cannot fit the picked model.
   const total = nextChars(), room = promptRoom();
   if (total > room) { updateSize(); return alert(`This question would send ${total.toLocaleString()} characters; ${pickedModel ?? "the model"} takes about ${room.toLocaleString()}. Remove data, untick earlier answers, use Pick files, or pick a model with more room.`); }
-  const chatBody = { ...(pickedModel ? { model: pickedModel } : {}), messages: buildMessages(question) };
+  // chainaim_restore: false asks the gateway to leave the placeholders in the answer; it never reaches the model.
+  const chatBody = { ...(pickedModel ? { model: pickedModel } : {}), messages: buildMessages(question), ...(KEEP_PLACEHOLDERS ? { chainaim_restore: false } : {}) };
   const r = $("payMode").checked ? await paidChat(chatBody) : await call("/gateway/chat", chatBody);
   if (!r) return; // this press only connected Crossmark
   await new Promise((ok) => setTimeout(ok, 400));
@@ -1036,13 +1040,18 @@ $("send").onclick = () => busy($("send"), async () => {
     // The stand-in's model ids start with "stub/": it only echoes the text, so say so instead of looking like a broken answer.
     if ((h["x-chainaim-model"] ?? "").startsWith("stub/")) out.append(block(el("p", { className: "err", textContent: "Stand-in mode: this fake model only echoes your text back. For real answers, run use-real-models.cmd in the test-console folder and paste your OpenRouter key when it asks." })));
     const answer = r.body.choices?.[0]?.message?.content ?? "";
+    // The gateway says whether it put the values back; a paid answer carries no such header, so the setting decides.
+    const kept = h["x-chainaim-restored"] ? h["x-chainaim-restored"] === "no" : KEEP_PLACEHOLDERS;
     const views = await publishPages(answer);
     out.append(block(el("span", { className: "blabel", textContent: "Conversation" }),
       el("div", { className: "chat" },
         bubble("you", "You", el("div", { textContent: question })),
-        bubble("ai", "Answer · placeholders restored", el("div", {}, viewLinks(views), markdown(answer))))));
-    // Keep the answer text only (not the R1 "reasoning" field), ticked, so a follow-up builds on it.
-    turns.push({ q: question, a: answer, model: r.headers["x-chainaim-model"] ?? "", use: true, views });
+        kept
+          ? bubble("ai", "Answer · placeholders kept (as the model wrote it)", el("div", {}, viewLinks(views), withPlaceholders(answer)))
+          : bubble("ai", "Answer · placeholders restored", el("div", {}, viewLinks(views), markdown(answer))))));
+    // Keep the answer text only (not the R1 "reasoning" field), ticked, so a follow-up builds on it. An answer with
+    // placeholders kept starts unticked: sent back, its <PERSON_1> could be numbered for a different value next time.
+    turns.push({ q: question, a: answer, model: r.headers["x-chainaim-model"] ?? "", use: !kept, views });
     renderTurns();
     updateSize();
   }

@@ -159,3 +159,69 @@ export function withinValue(text: string, found: readonly Detected[], contextLen
   }
   return out;
 }
+
+/**
+ * Request fields that reach the model besides the messages. They are walked
+ * like tool-call arguments: every object key and every string or number
+ * value, in reading order, so nothing in them reaches a model unscanned.
+ */
+export const SCANNED_REQUEST_FIELDS = ["tools", "response_format", "stop"] as const;
+export type ScannedField = (typeof SCANNED_REQUEST_FIELDS)[number];
+export type ScannedFields = Partial<Record<ScannedField, unknown>>;
+
+/**
+ * Context passed for a name a provider must receive exactly as written: a
+ * tool's function name, or a json_schema response format's name. A caller
+ * refuses the request if masking would change one (a placeholder breaks the
+ * provider's name rules, and the model calls tools by name).
+ */
+export const EXACT_NAME = "\u0000exact-name";
+
+/** Rebuild the scanned request fields with every text passed through fn (see mapConversation). Fields that are absent stay absent. */
+export function mapRequestFields(request: Readonly<Record<string, unknown>>, fn: TextMapper): ScannedFields {
+  const out: ScannedFields = {};
+  for (const field of SCANNED_REQUEST_FIELDS) {
+    const value = request[field];
+    if (value === undefined) continue;
+    if (field === "tools" && Array.isArray(value)) out.tools = value.map((t) => mapTool(t, fn));
+    else if (field === "response_format" && isRecord(value)) out.response_format = mapResponseFormat(value, fn);
+    else out[field] = mapJson(value, "", fn);
+  }
+  return out;
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** Entries in their original order, with one key's value produced by `exact` instead of the walk. */
+function mapObject(o: Record<string, unknown>, fn: TextMapper, exactKey: string, exact: (v: unknown) => unknown): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(o).map(([k, v]) => (k === exactKey ? [k, exact(v)] : [fn(k, ""), mapJson(v, k, fn)])),
+  );
+}
+
+/** { type: "function", function: { name, description, parameters } }: the name is exact, everything else is walked. */
+function mapTool(tool: unknown, fn: TextMapper): unknown {
+  if (!isRecord(tool) || !isRecord(tool.function)) return mapJson(tool, "", fn);
+  const f = tool.function;
+  return mapObject(tool, fn, "function", () => mapObject(f, fn, "name", (n) => (typeof n === "string" ? fn(n, EXACT_NAME) : mapJson(n, "name", fn))));
+}
+
+/** { type: "json_schema", json_schema: { name, schema, ... } }: the schema's name is exact, everything else is walked. */
+function mapResponseFormat(format: Record<string, unknown>, fn: TextMapper): unknown {
+  const js = format.json_schema;
+  if (!isRecord(js)) return mapJson(format, "", fn);
+  return mapObject(format, fn, "json_schema", () => mapObject(js, fn, "name", (n) => (typeof n === "string" ? fn(n, EXACT_NAME) : mapJson(n, "name", fn))));
+}
+
+/** Every string a rebuilt conversation or request field holds (keys included), for the residual check. */
+export function collectTexts(value: unknown, out: string[] = []): string[] {
+  if (typeof value === "string") out.push(value);
+  else if (Array.isArray(value)) for (const v of value) collectTexts(v, out);
+  else if (isRecord(value)) {
+    for (const [k, v] of Object.entries(value)) {
+      out.push(k);
+      collectTexts(v, out);
+    }
+  }
+  return out;
+}

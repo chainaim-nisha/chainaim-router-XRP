@@ -18,6 +18,9 @@
 - The gateway has no npm runtime dependencies (Node built-ins; Node runs the TypeScript). The paywall uses Hono and the official x402 libraries.
 - Secrets never go in config or git: environment variable NAMES only (`.env.example`).
 - Presidio unreachable means scan, mask and chat answer 503 and `/healthz` reports 503 (the model list, capacity and deployment routes don't depend on Presidio): message text, tool-call arguments included, that has not been scanned is never sent anywhere.
+- Everything that reaches a model is masked: message text, tool-call arguments, and the `tools`, `response_format` and `stop` fields (`privacy/mask.ts` `mapRequestFields`; `openrouter.ts` `shapeBody` never copies those three from the request). Tool and json_schema names must reach the model exactly, so a name holding personal data is refused (400).
+- Extra personal data is detected and masked by default (`--extra-entities`, `privacy/entities.ts`): bank account numbers, titled names (MR/MRS/DR…), street addresses, dates of birth, and locations. The start-up test sentence covers each group switched on.
+- Residual check (`privacy/residual.ts`, `--residual-guard on`): after masking, text that still holds a long digit run, spaced digit groups, an international phone number, an e-mail or a titled name is refused (422) before any model or Jev call; the refusal and the ledger hold kinds and counts only. `/v1/privacy/mask` reports the same as `residual`.
 - Health data (PHI) goes only to providers that don't collect data (`provider.data_collection: deny`), and never to Jev.
 
 ## Run and test

@@ -165,7 +165,7 @@ describe("validateChat", () => {
     });
     assert.equal(MAX_CHAT_SEGMENTS, 512);
     assert.doesNotThrow(() => validateChat(fields(512), 1024));
-    assert.throws(() => validateChat(fields(513), 1024), (e: unknown) => refused(e) && (e as Error).message === "messages hold 513 text fields; the limit is 512");
+    assert.throws(() => validateChat(fields(513), 1024), (e: unknown) => refused(e) && (e as Error).message === "messages and tools hold 513 text fields; the limit is 512");
   });
 });
 

@@ -14,6 +14,7 @@ import { Ledger } from "../src/ledger.ts";
 import { Pool } from "../src/pool.ts";
 import { CARD_REMOVED } from "../src/privacy/mask.ts";
 import { PresidioClient } from "../src/privacy/presidio.ts";
+import type { ResidualPolicy } from "../src/privacy/residual.ts";
 import { catalogSource, FreePool, openRouterDeployments, type ModelSource } from "../src/routing/freepool.ts";
 import { JevClient } from "../src/routing/jev.ts";
 import { Quota } from "../src/routing/quota.ts";
@@ -95,6 +96,8 @@ export type TestGatewayOptions = {
   rpm?: number;
   attemptTimeoutMs?: number;
   gatewayKey?: string;
+  /** The residual check (default: on, every check, 9 digits). */
+  residual?: ResidualPolicy;
 };
 
 export type TestGateway = {
@@ -140,7 +143,7 @@ export async function startTestGateway(o: TestGatewayOptions): Promise<TestGatew
       deny,
       jev,
       ledger: new Ledger(ledgerDir),
-      chat: { maxOutputTokens: 1024, maxAttempts: 3, attemptTimeoutMs: o.attemptTimeoutMs ?? 2000, healthFlagThreshold: 0.5 },
+      chat: { maxOutputTokens: 1024, maxAttempts: 3, attemptTimeoutMs: o.attemptTimeoutMs ?? 2000, healthFlagThreshold: 0.5, ...(o.residual ? { residual: o.residual } : {}) },
     },
     { maxBodyBytes: 1 << 20, gatewayKey: o.gatewayKey },
   );
