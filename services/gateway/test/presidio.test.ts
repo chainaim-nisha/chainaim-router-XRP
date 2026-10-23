@@ -138,7 +138,7 @@ describe("PresidioClient against the stub", () => {
   it("waitForPresidio refuses to start when Presidio answers but detects nothing, naming only the entity types", async () => {
     stub.mode = "detect-nothing";
     await assert.rejects(waitForPresidio(client, 1000, 10), (e: Error) => {
-      assert.match(e.message, /did not detect PERSON, EMAIL_ADDRESS, MEDICAL_RECORD in the start-up test sentence/);
+      assert.match(e.message, /did not detect PERSON, EMAIL_ADDRESS, MEDICAL_RECORD, BANK_ACCOUNT, STREET_ADDRESS, DATE_OF_BIRTH in the start-up test sentence/);
       assert.deepEqual(leaked(e.message), [], "the message holds none of the sentence's values");
       return true;
     });

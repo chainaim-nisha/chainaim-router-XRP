@@ -135,3 +135,16 @@ Still open: the Crossmark web page payment; Open Question 4 (Bazaar); `RUN-ON-AN
 - Next (owner): MANUAL_SETUP.md "2026-10-23 — buyer agents (L1)" steps 1 to 4. L1 passes at one answered, settled tool call from a tenant agent, with the model's inputs holding only masked text (the tests check that last part).
 - Next (agent, after L1 passes): L2, KMS Ed25519 signer.
 - Open: no ARCH-ID for L0 or L1.
+
+## 2026-10-24 — M1 (mask everything that reaches a model): code done on the Linux copy, PC test and real-Presidio run pending
+
+- Repository: `chainaim-router-private-ai-2`. Priority set by the owner: masking before any model call comes first; wallet, packages/, prechecks/, hack/ wait.
+- Done (BUILD_LOG.md 2026-10-24 M1): tools/response_format/stop masked; bank account, titled name, street address, date of birth, location detected and masked; residual check refuses (422) what still looks personal; `/v1/privacy/mask` reports it. 292/292 on the Linux copy.
+- Next (owner): MANUAL_SETUP.md "2026-10-24 — M1" steps 1 to 3. M1 passes when the gateway starts against the real Presidio and the spy shows no statement values.
+- Risk: if the real Presidio misses an extra start-up value, the gateway refuses to start and names the type; `--extra-entities` can switch that group off while the pattern is fixed.
+- Open: no ARCH-ID for M1.
+- **M1 PASSED (2026-10-24 00:19 IST, Windows PC):** `npm test` 292/292; gateway rebuilt and started against the real Presidio with every extra group (start-up sentence detected); `test-console\leak-check.ps1` on the sample bank statement: HTTP 200, 1 model body and 1 Jev body left, none of the 11 identifiers in them or in the ledger.
+- Uncommitted on the PC (owner commits by hand): the 18 M1 files, `test-console/leak-check.ps1`, `test-console/samples/sample-bank-statement.values.txt`, BUILD_LOG/STATE/MANUAL_SETUP entries.
+- Next (choose): run leak-check on a real statement with a values file kept outside the repo; or the deferred work (wallet created once and reused; packages/, prechecks/, hack/ layout).
+- 2026-10-24 01:05 IST: M1b (private chat answers keep placeholders; `KEEP_PLACEHOLDERS` in index.html, `chainaim_restore` in the gateway) and M1c (place names not masked by default; `--extra-entities all` adds them) PASSED on the PC: 296/296 tests; local CPU models (`ollama-cpu-8gb`) answered with `<PERSON_1>`/`<PERSON_2>` from the sample PDF. All still uncommitted.
+- Open: the buyer agent's own Bedrock prompt is not masked (agent-core.ts header); Word/Excel uploads need the extractor service; company and neighbourhood names are not detected.

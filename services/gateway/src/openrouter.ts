@@ -39,10 +39,27 @@ export const PASSTHROUGH = [
   "stop",
 ] as const;
 
-/** The upstream body before the per-attempt model, stream and provider fields. */
-export function shapeBody(request: Readonly<Record<string, unknown>>, messages: readonly unknown[], maxTokens: number): Record<string, unknown> {
+/** Passthrough fields that carry text: they reach the model only in their masked form (privacy/mask.ts mapRequestFields). */
+export const MASKED_PASSTHROUGH: ReadonlySet<string> = new Set(["tools", "response_format", "stop"]);
+
+/**
+ * The upstream body before the per-attempt model, stream and provider fields.
+ * `masked` holds the masked tools, response_format and stop; those three are
+ * never copied from the request, so an unmasked one can never reach a model
+ * (a field missing from `masked` is left out, not copied raw).
+ */
+export function shapeBody(
+  request: Readonly<Record<string, unknown>>,
+  messages: readonly unknown[],
+  maxTokens: number,
+  masked: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
   const body: Record<string, unknown> = { messages, max_tokens: maxTokens };
-  for (const field of PASSTHROUGH) if (request[field] !== undefined) body[field] = request[field];
+  for (const field of PASSTHROUGH) {
+    if (MASKED_PASSTHROUGH.has(field)) {
+      if (masked[field] !== undefined) body[field] = masked[field];
+    } else if (request[field] !== undefined) body[field] = request[field];
+  }
   return body;
 }
 

@@ -29,6 +29,12 @@ export const KNOWN_VALUES: readonly KnownValue[] = [
   { value: "AB1234563", type: "MEDICAL_LICENSE" },
   { value: "991122", type: "MEDICAL_RECORD" },
   { value: "1234567893", type: "US_NPI" },
+  // the start-up test sentence's extra values (services/gateway/src/privacy/entities.ts, EXTRA_CANARY)
+  { value: "06-0193-0921569-00", type: "BANK_ACCOUNT" },
+  { value: "MR TL ZENGENI", type: "PERSON" },
+  { value: "42 Rosewood Avenue", type: "STREET_ADDRESS" },
+  { value: "14/03/1981", type: "DATE_OF_BIRTH" },
+  { value: "London", type: "LOCATION" },
 ];
 
 export type CorpusItem = { id: string; text: string; expect: { dataClass: string; found: string[] } };

@@ -4,7 +4,7 @@
  * it. Every failure is a PresidioError, which the routes turn into 503 (fail
  * closed).
  */
-import { AD_HOC_RECOGNIZERS, DETECTED_ENTITIES, REQUIRED_PRESIDIO_ENTITIES, type Detected } from "./entities.ts";
+import { DEFAULT_DETECTION, type Detected, type Detection } from "./entities.ts";
 
 export class PresidioError extends Error {}
 
@@ -15,10 +15,13 @@ export type PresidioOptions = {
   timeoutMs: number;
   /** Parallel /analyze calls when a conversation has several texts. */
   concurrency?: number;
+  /** Entity types, ad-hoc recognizers and start-up check (default: every extra group on). */
+  detection?: Detection;
 };
 
 export class PresidioClient {
   readonly url: string;
+  readonly detection: Detection;
   /** Result of the last health check or call; /healthz reports it. */
   healthy = false;
   private readonly opts: PresidioOptions;
@@ -27,6 +30,7 @@ export class PresidioClient {
   constructor(opts: PresidioOptions) {
     this.opts = opts;
     this.url = opts.url.replace(/\/+$/, "");
+    this.detection = opts.detection ?? DEFAULT_DETECTION;
   }
 
   /** Entities in `text`: UTF-16 offsets, whitespace trimmed, overlaps resolved, sorted by start. `signal` cancels the call. */
@@ -41,8 +45,8 @@ export class PresidioClient {
           text,
           language: "en",
           score_threshold: this.opts.threshold,
-          entities: DETECTED_ENTITIES,
-          ad_hoc_recognizers: AD_HOC_RECOGNIZERS,
+          entities: this.detection.entities,
+          ad_hoc_recognizers: this.detection.recognizers,
         }),
       },
       signal,
@@ -178,18 +182,11 @@ export function resolveOverlaps(spans: readonly Detected[]): Detected[] {
 }
 
 /**
- * The start-up check's test sentence, built from synthetic corpus values
- * (scripts/synthetic-corpus.ts). The name needs the NLP model, the e-mail is
- * a pattern, and the record number needs ChainAim's ad-hoc recognizer and its
- * context word "MRN".
- */
-const CANARY = "Patient Jane Roe, MRN 991122, can be reached at jane.roe@example.com.";
-const CANARY_TYPES: readonly string[] = ["PERSON", "EMAIL_ADDRESS", "MEDICAL_RECORD"];
-
-/**
  * Start-up check (V4): wait until Presidio answers, then refuse to run if a
- * required built-in entity is missing, or if the test sentence does not come
- * back with a name, an e-mail and a medical record number. A wrong answer
+ * required built-in entity is missing, or if any value in the test sentence
+ * (presidio.detection.canary: a name, an e-mail, a medical record number,
+ * and one value per extra entity group switched on) is not covered by an
+ * entity of an expected type. A wrong answer
  * fails at once (naming entity types only, never the sentence); an
  * unreachable Presidio, or a failed call, is retried every pauseMs until
  * waitMs runs out.
@@ -207,14 +204,24 @@ export async function waitForPresidio(presidio: PresidioClient, waitMs: number, 
     }
   };
   const have = new Set(await answer(() => presidio.supportedEntities()));
-  const missing = REQUIRED_PRESIDIO_ENTITIES.filter((e) => !have.has(e));
+  const { required, canary } = presidio.detection;
+  const missing = required.filter((e) => !have.has(e));
   if (missing.length > 0) {
     throw new Error(`Presidio at ${presidio.url} does not support ${missing.join(", ")}; deploy services/presidio, which enables them`);
   }
-  const found = new Set((await answer(() => presidio.analyze(CANARY))).map((e) => e.type));
-  const undetected = CANARY_TYPES.filter((t) => !found.has(t));
+  const found = await answer(() => presidio.analyze(canary.text));
+  const undetected: string[] = [];
+  for (const { value, types } of canary.expect) {
+    const start = canary.text.indexOf(value);
+    const end = start + value.length;
+    const covered = found.some((e) => types.includes(e.type) && e.start <= start && e.end >= end);
+    if (!covered && !undetected.includes(types[0])) undetected.push(types[0]);
+  }
   if (undetected.length > 0) {
-    throw new Error(`Presidio at ${presidio.url} did not detect ${undetected.join(", ")} in the start-up test sentence; deploy services/presidio, which detects them`);
+    throw new Error(
+      `Presidio at ${presidio.url} did not detect ${undetected.join(", ")} in the start-up test sentence; deploy services/presidio, which detects them, ` +
+        "or switch the group off with --extra-entities",
+    );
   }
 }
 

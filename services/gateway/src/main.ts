@@ -9,7 +9,9 @@ import { parseArgs } from "node:util";
 import { loadCatalog } from "./catalog.ts";
 import { Ledger } from "./ledger.ts";
 import { Pool } from "./pool.ts";
+import { DEFAULT_EXTRA_GROUPS, detection, EXTRA_ENTITY_GROUPS, parseExtraGroups } from "./privacy/entities.ts";
 import { PresidioClient, waitForPresidio } from "./privacy/presidio.ts";
+import { parseResidualChecks, RESIDUAL_CHECKS } from "./privacy/residual.ts";
 import { catalogSource, FreePool, openRouterDeployments, type ModelSource } from "./routing/freepool.ts";
 import { JevClient } from "./routing/jev.ts";
 import { Quota } from "./routing/quota.ts";
@@ -36,6 +38,12 @@ const USAGE = `chainaim-gateway [flags]
   --presidio-timeout-ms N    per Presidio call                           (default 10000)
   --presidio-wait-ms N       how long start-up waits for Presidio        (default 120000)
   --presidio-check-ms N      Presidio health check period                (default 30000)
+  --extra-entities LIST      extra personal data to detect and mask: default, all, none, or any of
+                             ${EXTRA_ENTITY_GROUPS.join(",")}
+                             (default = ${DEFAULT_EXTRA_GROUPS.join(",")})
+  --residual-guard on|off    refuse a request when masked text still looks personal (default on)
+  --residual-checks LIST     all, or any of ${RESIDUAL_CHECKS.join(",")}  (default all)
+  --residual-min-digits N    fewest digits that count as an identifier   (default 9)
   --openrouter-base-url URL  OpenRouter API root                         (default https://openrouter.ai)
   --openrouter-key-env NAME  env var holding the OpenRouter key          (default OPENROUTER_API_KEY)
   --jev on|off               classify chat requests with Jev             (default on)
@@ -83,6 +91,10 @@ const OPTIONS = {
   "presidio-timeout-ms": { type: "string", default: "10000" },
   "presidio-wait-ms": { type: "string", default: "120000" },
   "presidio-check-ms": { type: "string", default: "30000" },
+  "extra-entities": { type: "string", default: "default" },
+  "residual-guard": { type: "string", default: "on" },
+  "residual-checks": { type: "string", default: "all" },
+  "residual-min-digits": { type: "string", default: "9" },
   "openrouter-base-url": { type: "string", default: "https://openrouter.ai" },
   "openrouter-key-env": { type: "string", default: "OPENROUTER_API_KEY" },
   jev: { type: "string", default: "on" },
@@ -104,6 +116,7 @@ export function parseFlags(argv: string[]) {
   const source = v["model-source"]!;
   if (source !== "catalog" && source !== "openrouter-free") throw new Error("--model-source must be catalog or openrouter-free");
   if (v.jev !== "on" && v.jev !== "off") throw new Error("--jev must be on or off");
+  if (v["residual-guard"] !== "on" && v["residual-guard"] !== "off") throw new Error("--residual-guard must be on or off");
   if (!ENV_NAME.test(v["openrouter-key-env"]!)) throw new Error("--openrouter-key-env must be an environment variable NAME, not a key");
   for (const name of ["presidio-url", "openrouter-base-url"] as const) {
     if (!URL.canParse(v[name]!)) throw new Error(`--${name} must be a URL`);
@@ -127,6 +140,12 @@ export function parseFlags(argv: string[]) {
     presidioTimeoutMs: int("presidio-timeout-ms", v["presidio-timeout-ms"]!, 1),
     presidioWaitMs: int("presidio-wait-ms", v["presidio-wait-ms"]!, 0),
     presidioCheckMs: int("presidio-check-ms", v["presidio-check-ms"]!, 0),
+    extraEntities: parseExtraGroups(v["extra-entities"]!),
+    residual: {
+      enabled: v["residual-guard"] === "on",
+      checks: parseResidualChecks(v["residual-checks"]!),
+      minDigits: int("residual-min-digits", v["residual-min-digits"]!, 4),
+    },
     openRouterBaseUrl: v["openrouter-base-url"]!.replace(/\/+$/, ""),
     openRouterKeyEnv: v["openrouter-key-env"]!,
     jev: v.jev === "on",
@@ -157,7 +176,7 @@ async function main(): Promise<void> {
   const openRouterKey = process.env[f.openRouterKeyEnv] || undefined;
 
   // Refuse to start without a Presidio that detects every required entity (V4).
-  const presidio = new PresidioClient({ url: f.presidioUrl, threshold: f.presidioThreshold, timeoutMs: f.presidioTimeoutMs });
+  const presidio = new PresidioClient({ url: f.presidioUrl, threshold: f.presidioThreshold, timeoutMs: f.presidioTimeoutMs, detection: detection(f.extraEntities) });
   await waitForPresidio(presidio, f.presidioWaitMs);
   presidio.start(f.presidioCheckMs);
 
@@ -203,7 +222,7 @@ async function main(): Promise<void> {
       deny: new ExpiringSet(f.denyCacheMs),
       jev,
       ledger,
-      chat: { maxOutputTokens: f.maxOutputTokens, maxAttempts: f.maxAttempts, attemptTimeoutMs: f.attemptTimeoutMs, healthFlagThreshold: f.healthFlagThreshold },
+      chat: { maxOutputTokens: f.maxOutputTokens, maxAttempts: f.maxAttempts, attemptTimeoutMs: f.attemptTimeoutMs, healthFlagThreshold: f.healthFlagThreshold, residual: f.residual },
     },
     { maxBodyBytes: f.maxBodyBytes, gatewayKey },
   );
@@ -212,7 +231,8 @@ async function main(): Promise<void> {
     const port = typeof addr === "object" && addr ? addr.port : f.port;
     console.log(
       `[chainaim-gateway] listening on http://${f.host}:${port}  source=${f.modelSource} models=${source.models().length} ` +
-        `jev=${jev ? "on" : "off"} presidio=${presidio.url} ledger=${ledger.enabled ? f.ledgerDir : "off"} auth=${gatewayKey ? "on" : "off"}`,
+        `jev=${jev ? "on" : "off"} presidio=${presidio.url} extra-entities=${f.extraEntities.join(",") || "none"} ` +
+        `residual=${f.residual.enabled ? `${f.residual.checks.join(",")}/${f.residual.minDigits}` : "off"} ledger=${ledger.enabled ? f.ledgerDir : "off"} auth=${gatewayKey ? "on" : "off"}`,
     );
   });
   const shutdown = () => {

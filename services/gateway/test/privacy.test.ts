@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { classify, countTypes } from "../src/privacy/classify.ts";
-import { AD_HOC_RECOGNIZERS, DETECTED_ENTITIES, HEALTH_TERMS, isMasked, REQUIRED_PRESIDIO_ENTITIES } from "../src/privacy/entities.ts";
+import { AD_HOC_RECOGNIZERS, detection, DETECTED_ENTITIES, EXTRA_ENTITY_GROUPS, HEALTH_TERMS, isMasked, isPersonal, parseExtraGroups, REQUIRED_PRESIDIO_ENTITIES } from "../src/privacy/entities.ts";
 import { CORPUS, KNOWN_VALUES } from "../../../scripts/synthetic-corpus.ts";
 import { stubDetect } from "../../../scripts/stub-presidio.ts";
 import { mapConversation, Masker, withinValue } from "../src/privacy/mask.ts";
@@ -20,8 +20,48 @@ describe("entity groups", () => {
     }
   });
 
-  it("never asks Presidio for locations, dates, NRP or URLs", () => {
-    for (const e of ["LOCATION", "DATE_TIME", "NRP", "URL"]) assert.ok(!DETECTED_ENTITIES.includes(e), e);
+  it("never asks Presidio for any date, NRP or URLs; dates only count next to a birth word (DATE_OF_BIRTH)", () => {
+    for (const e of ["DATE_TIME", "NRP", "URL"]) assert.ok(!DETECTED_ENTITIES.includes(e), e);
+  });
+
+  it("asks for bank accounts, street addresses and dates of birth by default, and masks them as personal data", () => {
+    for (const e of ["BANK_ACCOUNT", "STREET_ADDRESS", "DATE_OF_BIRTH"]) {
+      assert.ok(DETECTED_ENTITIES.includes(e), e);
+      assert.equal(isMasked(e), true, e);
+      assert.equal(isPersonal(e), true, e);
+    }
+  });
+
+  it("leaves place names (LOCATION) out by default, so \"the capital of India\" reaches the model; --extra-entities all adds them", () => {
+    assert.ok(!DETECTED_ENTITIES.includes("LOCATION"));
+    assert.ok(!detection().required.includes("LOCATION"));
+    assert.ok(detection(EXTRA_ENTITY_GROUPS).entities.includes("LOCATION"));
+    assert.equal(isMasked("LOCATION"), true, "a client's <C_LOCATION_1> still counts as personal data");
+  });
+
+  it("--extra-entities switches what is asked for, what is required and what the start-up sentence checks", () => {
+    const none = detection([]);
+    for (const e of ["BANK_ACCOUNT", "STREET_ADDRESS", "DATE_OF_BIRTH", "LOCATION"]) assert.ok(!none.entities.includes(e), e);
+    assert.ok(!none.required.includes("LOCATION"));
+    assert.deepEqual(none.canary.expect.map((x) => x.types[0]), ["PERSON", "EMAIL_ADDRESS", "MEDICAL_RECORD"]);
+    const bank = detection(["bank_account"]);
+    assert.ok(bank.entities.includes("BANK_ACCOUNT") && !bank.entities.includes("LOCATION"));
+    assert.ok(bank.recognizers.some((r) => r.supported_entity === "BANK_ACCOUNT"));
+    assert.ok(detection(["location"]).required.includes("LOCATION"));
+    assert.deepEqual(parseExtraGroups("all"), detection(EXTRA_ENTITY_GROUPS).groups);
+    assert.deepEqual(parseExtraGroups("default"), detection().groups);
+    assert.deepEqual(parseExtraGroups("none"), []);
+    assert.throws(() => parseExtraGroups("bank"), /unknown group bank/);
+  });
+
+  it("the plain account-number and date-of-birth patterns need a context word; the NZ account, titled name and street patterns do not", () => {
+    const byEntity = (e: string) => AD_HOC_RECOGNIZERS.filter((r) => r.supported_entity === e).flatMap((r) => r.patterns ?? []);
+    const bank = byEntity("BANK_ACCOUNT");
+    assert.ok(bank.some((p) => p.name === "nz account" && p.score >= 0.4));
+    assert.ok(bank.filter((p) => p.name !== "nz account").every((p) => p.score < 0.4));
+    assert.ok(byEntity("DATE_OF_BIRTH").every((p) => p.score < 0.4));
+    assert.ok(byEntity("STREET_ADDRESS").every((p) => p.score >= 0.4));
+    assert.ok(AD_HOC_RECOGNIZERS.some((r) => r.supported_entity === "PERSON" && r.patterns!.every((p) => p.score >= 0.4)), "titled-name pattern");
   });
 
   it("masks personal data and medical IDs, but not cards or health terms", () => {

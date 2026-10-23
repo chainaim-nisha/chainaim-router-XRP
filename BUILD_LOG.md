@@ -163,3 +163,79 @@ tests 90  suites 18  pass 90  fail 0  cancelled 0  skipped 0  todo 0  duration_m
 ```
 
 Next: Bedrock dry run and paid run (MANUAL_SETUP.md L1 steps 2 to 4).
+
+## 2026-10-24 — M1: mask everything that reaches a model (gateway)
+
+Repository: `chainaim-router-private-ai-2` (PC folder; code identical to `chainaim-router-XRP-RLUSD-` main `ab3b178`, checked by file size with CRLF on every file changed).
+
+Bug fixed (verified in code): `openrouter.ts` `shapeBody` copied `tools`, `response_format` and `stop` from the request to the model unscanned; `chat.ts` `prepare` scanned only `messages`. Detection gaps: no bank-account type, no address or date of birth, names only from the NLP model. Nothing re-checked text after masking.
+
+Changed: `services/gateway/src/{chat.ts, openrouter.ts, main.ts, server.ts}`, `privacy/{entities.ts, mask.ts, presidio.ts}`, `scripts/synthetic-corpus.ts` (start-up sentence values for the stub), `PROJECT_CONTEXT.md`; tests `chat`, `openrouter`, `presidio`, `privacy`, `helpers` (4 assertions pinned to the old behaviour updated to the new one, none removed or skipped).
+New: `privacy/residual.ts`; tests `passthrough-mask.test.ts`, `residual.test.ts`, `entities.test.ts`. Deleted: none.
+New flags: `--extra-entities` (all), `--residual-guard` (on), `--residual-checks` (all), `--residual-min-digits` (9). No new environment variable.
+
+Run on the Linux copy (Node 22.22.0), `npm test` before the change: `tests 266 pass 266 fail 0`. After:
+
+```
+# tests 292
+# suites 48
+# pass 292
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+```
+
+Regression check: with `shapeBody` put back to copying the three fields raw, `node --test test/passthrough-mask.test.ts` gave `pass 10 fail 3` (the three leak tests); with the fix, `pass 13 fail 0`.
+`node services/gateway/src/main.ts --help` lists the new flags; `--residual-guard maybe` is refused.
+
+Not run: `npm test` on the Windows PC; the gateway against the real Presidio (the new ad-hoc patterns and the extended start-up sentence are checked only against the test Presidio and with JavaScript regex). No typecheck script exists in package.json (build.config.json names `npm run typecheck`).
+
+Owner run on the Windows PC, 2026-10-24 00:14 IST, `npm test` in `chainaim-router-private-ai-2`:
+
+```
+tests 292  suites 48  pass 292  fail 0  cancelled 0  skipped 0  todo 0  duration_ms 5707.7452
+```
+
+Next: MANUAL_SETUP.md M1 step 2 (rebuild `ca-gateway`, start against the real Presidio).
+
+Owner run, 2026-10-24 00:16–00:17 IST: `docker build -t chainaim-gateway:test -f services/gateway/Dockerfile .` from `chainaim-router-private-ai-2` (layer 7/7 `COPY services/gateway/src` rebuilt, not cached). `test-console\use-stand-in.cmd`: `Answer from stub/charlie-8b:free: echo: What is the capital of India?`. `docker logs ca-gateway`:
+
+```
+[chainaim-gateway] listening on http://:::8700  source=openrouter-free models=3 jev=on presidio=http://presidio.railway.internal:3000 extra-entities=bank_account,titled_name,street_address,dob,location residual=digits,spaced_digits,intl_phone,email,titled_name/9 ledger=/data/ledger auth=on
+```
+
+The real Presidio (`ca-presidio`) passed the extended start-up sentence: every extra group's value was detected with an expected type (otherwise the gateway refuses to start). M1 step 2 PASSED. Next: step 3 (sample bank statement, spy record).
+
+New for step 3: `test-console/leak-check.ps1` (flags: -Document, -ValuesFile, -Question, -GatewayUrl, -KeyFile, -SpyContainer, -GatewayContainer, -LedgerLines, -SettleSeconds) and `test-console/samples/sample-bank-statement.values.txt` (the sample's 11 synthetic identifiers). The script posts the document to the gateway, reads what `ca-openrouter-stub` recorded (MODEL and JEV bodies) and the newest ledger lines, and fails if any listed value appears; it prints line numbers, never values.
+
+Owner run, 2026-10-24 00:19 IST, real Presidio, stand-in model:
+
+```
+HTTP 200 from the gateway
+left the gateway: 1 model body(ies), 1 Jev body(ies); ledger lines read: 3
+PASS: none of the 11 values left; the model got masked text only
+```
+
+M1 PASSED (steps 1 to 3).
+
+## 2026-10-24 — M1b: answer with placeholders kept (owner request)
+
+Gateway: new request option `chainaim_restore` (boolean, default true; anything else 400). `false` returns the model's answer with the placeholders left in; the option never reaches the model (not in PASSTHROUGH); ledger records `restored: false`; response header `x-chainaim-restored: yes|no` (the paywall already passes `x-chainaim-*` back). Files: `services/gateway/src/chat.ts`, `server.ts`, `test/passthrough-mask.test.ts` (+3 tests).
+Console: `test-console/console/index.html`, private chat tab: checkbox "Show the answer with placeholders"; when on, the request carries `chainaim_restore: false`, the answer is shown with highlighted placeholders, and it starts unticked in the history (sent back, its numbering could collide).
+
+Run on the Linux copy: `npm test` `pass 295 fail 0`. UI driven in Chromium against a local gateway, test Presidio, spy and console: switch off → "Answer · placeholders restored" with real values; switch on → "Answer · placeholders kept" reading `<PERSON_1> ... <PERSON_2> ... <EMAIL_ADDRESS_1> ... <BANK_ACCOUNT_1>`; "Sent to the model" showed placeholders only in both. Not yet run on the Windows PC.
+
+Owner run on the Windows PC, 2026-10-24 00:41 IST: `npm test` `tests 295 suites 49 pass 295 fail 0`; `docker build -t chainaim-gateway:test ...` (layer 7/7 rebuilt); `use-stand-in.cmd`: `Answer from stub/charlie-8b:free: echo: What is the capital of India?`. Next: the switch in the browser with an uploaded PDF.
+
+Owner decision, 00:43 IST: no switch on the page; answers always keep the placeholders. `index.html`: checkbox removed; `const KEEP_PLACEHOLDERS = true` near the top of the script sends `chainaim_restore: false` on every private-chat Send (set it to false to restore real values). Re-run in Chromium on the Linux copy: "Answer · placeholders kept" with `<PERSON_1> <PERSON_2> <EMAIL_ADDRESS_1> <BANK_ACCOUNT_1>`; no `keepMasked` left in the page; PC copy 76,247 bytes, same as the tested copy.
+
+## 2026-10-24 — M1c: place names no longer masked by default
+
+Found on the PC, 00:56 IST: after `switch-models.ps1 -To ollama-cpu-8gb`, the test question "What is the capital of India?" reached `local/qwen2.5-3b` as "<LOCATION_1>" and the model could not answer (it also wrote `LOCATION_1` without brackets, so nothing was restored). Cause: M1 turned on the `location` group by default.
+Change (owner approved 00:58): `entities.ts` `DEFAULT_EXTRA_GROUPS` = bank_account, titled_name, street_address, dob; `--extra-entities` default `default` (`all` adds location); `main.ts` help text. Tests: `privacy.test.ts` (default list without LOCATION; new test that LOCATION is off by default and on with all), `presidio.test.ts` (start-up message without LOCATION). Street addresses remain masked (STREET_ADDRESS).
+Linux copy: `npm test` `pass 296 fail 0`; `--help` shows `(default = bank_account,titled_name,street_address,dob)`.
+
+Owner run on the Windows PC, 2026-10-24 01:00 IST: `npm test` `tests 296 suites 49 pass 296 fail 0`; gateway image rebuilt; `switch-models.ps1 -To ollama-cpu-8gb` (registry config/local-models.cpu.json, the models this PC already had): `Answer from local/qwen2.5-3b: The capital of India is New Delhi.` M1c PASSED; local CPU models back on.
+
+Owner check in the browser, 01:05 IST: console running from `chainaim-router-private-ai-2` (start.cmd, PID 26680), 02 Private chat, model local/qwen2.5-3b, attached `test-console/samples/sample-bank-statement.pdf`, question "Who is the account holder and who was paid?". Answer kept the placeholders: "The account holder is <PERSON_1> ... <PERSON_2> provided the monthly salary ..."; no real name, e-mail, phone, PAN, IBAN or card number in it; "Acme Logistics" in plain text (a company, not detected as personal data, as expected). Answer quality is the 3B CPU model's, not the masking's.

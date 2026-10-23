@@ -9,8 +9,9 @@ import { HttpError } from "./errors.ts";
 import { REQUEST_FAULTS, shapeBody } from "./openrouter.ts";
 import type { Pool } from "./pool.ts";
 import { classify, clientPlaceholderTypes, countTypes, type Classes, type DataClass, type FoundClass } from "./privacy/classify.ts";
-import { Masker, mapConversation, withinValue, type Message } from "./privacy/mask.ts";
+import { collectTexts, EXACT_NAME, Masker, mapConversation, mapRequestFields, withinValue, type Message, type ScannedFields } from "./privacy/mask.ts";
 import { PresidioError, type PresidioClient } from "./privacy/presidio.ts";
+import { DEFAULT_RESIDUAL, residualHits, residualMessage, type ResidualHit, type ResidualPolicy } from "./privacy/residual.ts";
 import { restoreCompletion } from "./privacy/restore.ts";
 import { classifyTask, type TaskClass, type TaskInput } from "./routing/classify.ts";
 import type { ModelSource } from "./routing/freepool.ts";
@@ -28,7 +29,14 @@ const CHAIN_LENGTH = 3;
 const NO_DENY_PROVIDER = "health data only goes to model providers that do not collect data, and none is available right now; you were not charged";
 const CLIENT_CLOSED = { status: 499, message: "client closed the request" };
 
-export type ChatOptions = { maxOutputTokens: number; maxAttempts: number; attemptTimeoutMs: number; healthFlagThreshold: number };
+export type ChatOptions = {
+  maxOutputTokens: number;
+  maxAttempts: number;
+  attemptTimeoutMs: number;
+  healthFlagThreshold: number;
+  /** The check after masking (privacy/residual.ts); default: on, every check, 9 digits. */
+  residual?: ResidualPolicy;
+};
 export type ChatDeps = {
   presidio: PresidioClient;
   pool: Pool;
@@ -56,6 +64,10 @@ export type ChatRecord = {
   chain?: string[];
   served?: string;
   unresolvedPlaceholders?: number;
+  /** false when the caller asked to keep the placeholders in the answer (chainaim_restore: false). */
+  restored?: boolean;
+  /** What the residual check found after masking: kinds and counts, never values. */
+  residual?: ResidualHit[];
 };
 
 export type ChatResult =
@@ -71,7 +83,17 @@ export type Validated = {
   hasTools: boolean;
   wantsJson: boolean;
   chars: number;
+  /** Put the original values back in the answer (default), or return it with the placeholders (chainaim_restore: false). */
+  restore: boolean;
 };
+
+/**
+ * A ChainAim request option, not an OpenAI one: `chainaim_restore: false`
+ * returns the model's answer with the placeholders (<PERSON_1>, ...) left in,
+ * so a caller can see exactly what the model worked with. It never reaches a
+ * model: shapeBody copies only the PASSTHROUGH fields.
+ */
+export const RESTORE_FIELD = "chainaim_restore";
 
 const ROLES = new Set(["system", "developer", "user", "assistant", "tool"]);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -105,6 +127,14 @@ function checkMessage(m: unknown, i: number): Message {
   return out;
 }
 
+/** A tool_choice that names a function must name one of the request's tools, so it carries no text the scan did not see. */
+function checkToolChoice(choice: unknown, tools: unknown[]): void {
+  if (choice === undefined || choice === null || typeof choice === "string") return;
+  const name = isObj(choice) && isObj(choice.function) ? choice.function.name : undefined;
+  const names = tools.map((t) => (isObj(t) && isObj(t.function) ? t.function.name : undefined));
+  if (typeof name !== "string" || !names.includes(name)) throw new HttpError(400, "tool_choice: must be a string, or name one of the tools in this request");
+}
+
 /** Spec section 4, chat step 1. Throws HttpError(400); nothing has been scanned or logged yet. */
 export function validateChat(body: unknown, maxOutputTokens: number): Validated {
   if (!isObj(body)) throw new HttpError(400, "request body must be a JSON object");
@@ -112,18 +142,23 @@ export function validateChat(body: unknown, maxOutputTokens: number): Validated 
   const messages = body.messages.map(checkMessage);
   let chars = 0;
   let segments = 0;
-  mapConversation(messages, (text) => {
+  const count = (text: string) => {
     chars += text.length;
     segments++;
     return text;
-  });
-  if (chars > MAX_CHAT_CHARS) throw new HttpError(400, `messages hold ${chars} characters of text; the limit is ${MAX_CHAT_CHARS}`);
-  if (segments > MAX_CHAT_SEGMENTS) throw new HttpError(400, `messages hold ${segments} text fields; the limit is ${MAX_CHAT_SEGMENTS}`);
+  };
+  mapConversation(messages, count);
+  mapRequestFields(body, count); // tools, response_format and stop are scanned too, so they count
+  if (chars > MAX_CHAT_CHARS) throw new HttpError(400, `messages and tools hold ${chars} characters of text; the limit is ${MAX_CHAT_CHARS}`);
+  if (segments > MAX_CHAT_SEGMENTS) throw new HttpError(400, `messages and tools hold ${segments} text fields; the limit is ${MAX_CHAT_SEGMENTS}`);
   const requested = body.max_completion_tokens ?? body.max_tokens;
   if (requested !== undefined && requested !== null && (!Number.isInteger(requested) || (requested as number) < 1)) {
     throw new HttpError(400, "max_tokens must be a positive integer");
   }
   const tools = Array.isArray(body.tools) ? body.tools : [];
+  checkToolChoice(body.tool_choice, tools);
+  const restore = body[RESTORE_FIELD];
+  if (restore !== undefined && typeof restore !== "boolean") throw new HttpError(400, `${RESTORE_FIELD}: true or false`);
   const format = isObj(body.response_format) ? body.response_format.type : undefined;
   return {
     messages,
@@ -134,6 +169,7 @@ export function validateChat(body: unknown, maxOutputTokens: number): Validated 
     hasTools: tools.length > 0 && body.tool_choice !== "none",
     wantsJson: format === "json_object" || format === "json_schema",
     chars,
+    restore: restore !== false,
   };
 }
 
@@ -146,10 +182,10 @@ export function messageText(m: Message): string {
   return parts.join("\n");
 }
 
-function taskInput(masked: readonly Message[], v: Validated): TaskInput {
+function taskInput(masked: readonly Message[], v: Validated, maskedFields: ScannedFields): TaskInput {
   const isSystem = (m: Message) => m.role === "system" || m.role === "developer";
   const turns = masked.filter((m) => !isSystem(m)).map((m) => ({ role: m.role, text: messageText(m) }));
-  const toolChars = Array.isArray(v.raw.tools) ? JSON.stringify(v.raw.tools).length : 0;
+  const toolChars = Array.isArray(maskedFields.tools) ? JSON.stringify(maskedFields.tools).length : 0;
   const chars = masked.reduce((n, m) => n + messageText(m).length, 0) + toolChars;
   return {
     system: masked.filter(isSystem).map(messageText).join("\n"),
@@ -161,15 +197,33 @@ function taskInput(masked: readonly Message[], v: Validated): TaskInput {
   };
 }
 
-type Prepared = { v: Validated; masked: Message[]; masker: Masker; types: string[]; local: Classes; input: TaskInput };
+type Prepared = { v: Validated; masked: Message[]; maskedFields: ScannedFields; masker: Masker; types: string[]; local: Classes; input: TaskInput };
 
-/** Steps 2 to 4: detect over every text field, classify locally, mask with one shared numbering. Detection stops when `signal` aborts. */
+/** The texts a model will read in a masked conversation: contents, text parts, tool-call names and arguments (not ids or roles). */
+function conversationTexts(messages: readonly Message[]): string[] {
+  const out: string[] = [];
+  for (const m of messages) {
+    if (typeof m.content === "string") out.push(m.content);
+    else if (Array.isArray(m.content)) for (const p of m.content) out.push(p.text);
+    for (const c of m.tool_calls ?? []) out.push(c.function.name, c.function.arguments);
+  }
+  return out;
+}
+
+/**
+ * Steps 2 to 4: detect over every text field (messages, then tools,
+ * response_format and stop), classify locally, mask with one shared
+ * numbering, then run the residual check on everything that will be sent.
+ * Detection stops when `signal` aborts.
+ */
 async function prepare(v: Validated, deps: ChatDeps, record: ChatRecord, signal?: AbortSignal): Promise<Prepared> {
   const segments: { text: string; context: string }[] = [];
-  mapConversation(v.messages, (text, context) => {
-    segments.push({ text, context });
+  const collect = (text: string, context: string) => {
+    segments.push({ text, context: context === EXACT_NAME ? "" : context });
     return text;
-  });
+  };
+  mapConversation(v.messages, collect);
+  mapRequestFields(v.raw, collect);
   const found = await deps.presidio.analyzeAll(segments.map((s) => s.context + s.text), signal);
   const entities = found.map((f, i) => withinValue(segments[i].text, f, segments[i].context.length));
   const all = entities.flat();
@@ -178,9 +232,22 @@ async function prepare(v: Validated, deps: ChatDeps, record: ChatRecord, signal?
   const local = classify(types);
   const masker = new Masker();
   let next = 0;
+  // Same order as the detection pass: messages first, then the request fields.
   const masked = mapConversation(v.messages, (text) => masker.mask(text, entities[next++]));
+  const maskedFields = mapRequestFields(v.raw, (text, context) => {
+    const out = masker.mask(text, entities[next++]);
+    if (context === EXACT_NAME && out !== text) {
+      throw new HttpError(400, "a tool or response_format name contains personal data; rename it (names reach the model exactly as written)");
+    }
+    return out;
+  });
   Object.assign(record, { dataClass: local.dataClass, found: local.found, entityCounts: countTypes(all), cardsRemoved: masker.cardsRemoved });
-  return { v, masked, masker, types, local, input: taskInput(masked, v) };
+  const hits = residualHits([...conversationTexts(masked), ...collectTexts(maskedFields)], deps.chat.residual ?? DEFAULT_RESIDUAL);
+  if (hits.length > 0) {
+    record.residual = hits;
+    throw new HttpError(422, residualMessage(hits));
+  }
+  return { v, masked, maskedFields, masker, types, local, input: taskInput(masked, v, maskedFields) };
 }
 
 type Decision = { classes: Classes; chain: string[] };
@@ -230,7 +297,7 @@ type ChainOutcome = { ok: true; model: string; completion: Record<string, unknow
 
 /** Step 7 (spec section 7): every attempt counts against the quota; account limits and a rejected key stop the chain. */
 async function callChain(d: Decision, p: Prepared, deps: ChatDeps, signal: AbortSignal, record: ChatRecord): Promise<ChainOutcome> {
-  const body = shapeBody(p.v.raw, p.masked, p.v.maxTokens);
+  const body = shapeBody(p.v.raw, p.masked, p.v.maxTokens, p.maskedFields);
   const dataCollection = d.classes.policy.dataCollection;
   const attempts = record.attempts;
   for (const model of d.chain) {
@@ -290,10 +357,13 @@ export async function runChat(body: unknown, deps: ChatDeps, signal: AbortSignal
   }
   const outcome = await callChain(d, p, deps, signal, record);
   if (!outcome.ok) return { ok: false, status: outcome.status, message: outcome.message, retryAfterSec: outcome.retryAfterSec, record };
-  const stats = { unresolved: 0 };
-  restoreCompletion(outcome.completion, p.masker.map, stats);
   record.served = outcome.model;
-  record.unresolvedPlaceholders = stats.unresolved;
+  record.restored = v.restore;
+  if (v.restore) {
+    const stats = { unresolved: 0 };
+    restoreCompletion(outcome.completion, p.masker.map, stats);
+    record.unresolvedPlaceholders = stats.unresolved;
+  }
   return { ok: true, completion: outcome.completion, stream: v.stream, record };
 }
 
