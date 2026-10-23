@@ -15,6 +15,11 @@
  *   node scripts/pay.ts https://PAYWALL/v1/privacy/mask --text "Patient Jane Roe, MRN 991122."
  *   node scripts/pay.ts https://PAYWALL/v1/chat/completions --body-file ask.json
  *   node scripts/pay.ts https://PAYWALL/v1/privacy/scan '{"text":"..."}'
+ *
+ * --seed-prefix NAME reads the seed from NAME_TESTNET (or NAME_MAINNET)
+ * instead of XRPL_BUYER_SEED_*, so one of the test rig's tenants can pay:
+ *
+ *   node scripts/pay.ts --seed-prefix XRPL_SEED_T01 https://PAYWALL/v1/privacy/scan --text "hello"
  */
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
@@ -27,10 +32,12 @@ const { values, positionals } = parseArgs({
     text: { type: "string" },
     /** A file holding the whole JSON body, for a shape --text cannot build (chat, tool calls). */
     "body-file": { type: "string" },
+    /** The seed is read from PREFIX_TESTNET or PREFIX_MAINNET. */
+    "seed-prefix": { type: "string", default: "XRPL_BUYER_SEED" },
   },
 });
 
-const USAGE = "usage: node scripts/pay.ts [--dry-run] URL [--text TEXT | --body-file FILE | JSON_BODY]";
+const USAGE = "usage: node scripts/pay.ts [--dry-run] [--seed-prefix NAME] URL [--text TEXT | --body-file FILE | JSON_BODY]";
 
 /** A problem with the arguments: print the message and exit with 2, as the other scripts do. */
 function fail(message: string): never {
@@ -90,12 +97,13 @@ if (values["dry-run"]) {
 }
 
 // Loaded only when paying, so --dry-run needs no signing libraries.
-const { account, payAndFetch, SetupError } = await import("./xrpl.ts");
+const { account, payAndFetch, seedBuyer, SetupError } = await import("./xrpl.ts");
 try {
-  const buyer = account(process.env);
-  console.log(`buyer ${buyer.wallet.classicAddress} on ${buyer.network}`);
-  const { response: r, receipt } = await payAndFetch(url, init, buyer);
+  const buyer = seedBuyer(account(process.env, { seedPrefix: values["seed-prefix"] }));
+  console.log(`buyer ${buyer.signer.classicAddress} on ${buyer.network}`);
+  const { response: r, receipt, refusal } = await payAndFetch(url, init, buyer);
   console.log(`HTTP ${r.status}`);
+  if (refusal) console.log(`payment refused by the paywall: ${refusal}`);
   console.log((await r.text()).slice(0, 1000));
   if (r.ok) console.log(`payment ${JSON.stringify(receipt)}`);
   process.exitCode = r.ok ? 0 : 1;
