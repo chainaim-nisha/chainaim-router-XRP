@@ -100,3 +100,38 @@ Notes found on the way:
 - A test console process started before the merge showed the price as `1e-8` with no issuer or invoice; after restarting it the 03 Payment section shows 0.01 RLUSD, the issuer, payTo and the invoice.
 
 Still open: the Crossmark web page payment; Open Question 4 (Bazaar); `RUN-ON-ANOTHER-PC.md` step 6 update; committing the untracked CPU config files; merging `integrate-xrpl` into `main` (nothing pushed).
+
+## 2026-10-23 — L0 (signer-based payments + multi-tenant rig): code done, TestNet run pending
+
+- Done (details and test output in BUILD_LOG.md, same date): `payAndFetch` pays through a signer and checks network, payment and signature before sending; `--seed-prefix` on pay.ts and private-ask.ts; `scripts/rig.ts` + `rig-core.ts` with three synthetic tenants in `rig/tenants/`; 19 new tests. Paywall 75/75 and web 105/105 on a Linux copy of 568509f.
+- Next (owner): `npm install` in `services/paywall` on this PC and `npm test` there; then MANUAL_SETUP.md 2026-10-23 steps 1 to 5 for t01..t03. L0 passes at "settled 30 of 30" and 30 `payment_settled` lines from three payers.
+- Next (agent, after L0 passes): L2, a KMS Ed25519 signer that implements the same `XrplSigner` in `scripts/signer.ts`.
+- Open: no ARCH-ID for the rig (tests named `L0-RIG`).
+- Owner run on this PC, 10:41 IST: `npm install` + `npm test` in `services/paywall`: 75/75 pass.
+- Tenant wallets (TestNet, public addresses; seeds in the owner's password manager and `.env` as `XRPL_SEED_T0n_TESTNET`). Each funded with 100 XRP through the faucet API, then `trust-line.ts` opened its RLUSD line:
+
+| Tenant | Address | RLUSD trust line tx |
+|---|---|---|
+| t01 | `rNyKVsrK82yU4v5WBxfAjq3Nk7Ls9oVF8U` | `9C6F39D39C642D9BA1C3097E09EF103D51691A0A96F80B548EAE3F2FAEE1FA86` |
+| t02 | `rD59tmENJNnHovdi4hKq79DVP4gnDNFGWk` | `7A98E7629392B2C36109E4636DFCC6D75A3ECA5F2E8DD0F14AF5AD3F625DF3E3` |
+| t03 | `rKSZJdBpp1vDpqYWbaDFKWDecwSMmmGA1B` | `2C03942CE90E6141BBDEC4812C770605A1DA92BBD744D783D5EFED6E5A5DEBEB` |
+
+- Note for PowerShell: read a tenant seed for one command with Node's own .env parser (the same one the scripts use), never by pasting: `$env:XRPL_BUYER_SEED_TESTNET = node -e "process.loadEnvFile('../../.env'); process.stdout.write((process.env.XRPL_SEED_T01_TESTNET||'').replace(/['\x22]/g,'').trim())"`, then the script, then `Remove-Item Env:XRPL_BUYER_SEED_TESTNET`.
+- RLUSD: 0.5 to each tenant from the owner's Crossmark account `rn4QHduCAXzkEgC1nPdUno5rWfxZarJw1a` (11:16–11:35 IST). Txs: t01 `3D33BDE835D9269133671D86F2F81384A7AD032184B99CDE4E4CF0BCF425C1F0`; then, in the order sent (t02, t03 assumed from that order): `A9ACA8026BAB2856F922353E3A8E120895742EFE6D7665F4F7144CC0E8581C39`, `9F0E7D0BFEF2CEE0126684F3C0ADC4699523E31CFD252F81544C5A03FC43D2EB`. Checked with `trust-line.ts` (read only): each tenant `XRP 99.999988; RLUSD trust line open, balance 0.5`.
+- Rig dry run (11:37 IST): passed. Stack up (`ca-paywall`, `ca-gateway`, `ca-presidio` healthy, `ca-openrouter-stub`); price 0.01 RLUSD on xrpl:1 to `rn5hSy7QvsrQLpGb3k5dp4h8Yrk9J7gBej`.
+- **BLOCKER (11:40–11:51 IST): the paywall cannot reach the t54 facilitator from this PC's current network.** Every paid call came back HTTP 402; after `payAndFetch` was taught to report the paywall's reason, it read `fetch failed`. `Invoke-RestMethod https://xrpl-facilitator-testnet.t54.ai/supported` from the host: "Could not establish trust relationship for the SSL/TLS secure channel"; the same fetch from inside `ca-paywall`: `SELF_SIGNED_CERT_IN_CHAIN`. A TLS-inspecting proxy or antivirus re-signs `*.t54.ai` (as noted for Sophos earlier). No payment was verified or settled: every tenant still holds 0.5 RLUSD. `FACILITATOR_URL_TESTNET` is unset in the container (default t54 TestNet URL). Fix is the network, not the code; TLS verification must not be switched off.
+- Code change made while diagnosing: `payAndFetch` returns `refusal` (the x402 `error` in the paywall's PAYMENT-REQUIRED header); the rig records it, `pay.ts` prints it; new test. Paywall 76/76 on this PC.
+- Diagnosis (11:56–11:59 IST): the re-signing CA is `Sophos / Sophos SSL CA_C44316162989-HI1GIG`; the PC was on wired Ethernet and has no Sophos services, so the interception is a Sophos Firewall on the wired LAN (inference from the CA name and the absence of local Sophos). On Wi-Fi (12:06 IST) `ca-paywall` reached t54: `/supported` lists `exact` and `upto` on `xrpl:1` (no `batch-settlement` now, unlike 21 Oct).
+- **First settlements through the signer path (12:06 IST):** t01 `A5C1A5E1D2F5E0D7AC437C66D39D20A49ACB712BDC9DB21CA8E16AACA208150E`, t02 `891CE866F7250588DE80567098A5FF4FCC9E8555B3F36598EA0E12CC10F65383`, t03 `14C4C87E2B3CDBC9CD77B19AD247ECAB41C163534598DAE08F8B552713A690D7` (0.01 RLUSD each, HTTP 200). Calls 2–10 of every tenant failed before signing with "the XRP Ledger server did not answer" (no payment made): the web page's reader opened a new WebSocket per ledger read (4 per payment, 3 tenants at once), which the public TestNet server stopped answering (likely cause, inferred).
+- Fix: `ledgerOverClient` / `withLedger` in `scripts/xrpl.ts` (one xrpl.js connection; server error codes kept); `payAndFetch` opens one per call by default; the rig keeps one per tenant for the whole run. 3 new tests; paywall 79/79 on the Linux copy.
+- **L0 PASSED (12:11 IST, Wi-Fi):** `npm test` 79/79 on this PC; `node scripts/rig.ts --url http://127.0.0.1:8080 --calls 10` → `settled 30 of 30`, every tenant `settled 10, not settled 0, refused 0, errors 0, spent 0.1 RLUSD`. Records: `rig/out/run-2026-10-23T06-41-04-086Z.jsonl` (30 transaction hashes, one per call). First and last per tenant: t01 `FC96CC05B43CF989D18108226ACF7B4327967E8AC4757D6956BD45B49D4B399F` … `4A87CDC196D3108439A03DA76783C4475FCE4B9C73A7A79C0594F99CD16A8EC4`; t02 `F82A9B6F0C6E08C1CD24DC8A45609F8556403865AE20366AE68BBA848F582923` … `F728B1468FCB05782D9CA4ACB8F1CDADEDD77CD92DFB3412920F72A9A4F3D727`; t03 `FC8134C68E22CAD55B846CC00095B11AC50726819D77F1C3DA0C6ED535845D4C` … `3F12C7AA9D50C6A78AB7A08D555340250BE6104FBF0FA1928CD55ED5E93293E1`. Expected balances now 0.39 RLUSD per tenant (0.5 − 0.01 from the 12:06 run − 0.10). Cross-checked 12:14 IST: `docker logs ca-paywall --since 30m` shows 11 `payment_settled` lines for each of the three payers = 10 from this run + 1 from the 12:06 run; nothing else settled.
+- Next (agent): L2, a KMS Ed25519 signer implementing the same `XrplSigner` (`scripts/signer.ts`). Long term (owner): ask IT to exclude `*.t54.ai` from the Sophos Firewall's HTTPS inspection, or keep running on Wi-Fi.
+
+## 2026-10-23 — L1 (buyer agents on Strands + Bedrock): code done, PC test and Bedrock run pending
+
+- Order changed by the owner: L1 before L2 (L2 waits on AWS KMS access).
+- Done (details in BUILD_LOG.md, same date): `agent.ts` / `agent-core.ts` (one tool, `chainaim_private_ask(file, question)`), shared `private-ask-core.ts`, `private-ask.ts` thinned onto it, `test/agent.test.ts` (11 tests), tenant docs in `rig/tenants/t0n/docs/`, Strands SDK 1.20.0 + zod 4.6.7 in `package.json`. 90/90 on the Linux copy.
+- Note: an earlier draft of `agent-core.ts` and `agent.ts` was already on the PC at 12:46 IST from an earlier session; it was compared byte for byte, kept (agent-core) and rewritten (agent.ts, 1 byte different).
+- Next (owner): MANUAL_SETUP.md "2026-10-23 — buyer agents (L1)" steps 1 to 4. L1 passes at one answered, settled tool call from a tenant agent, with the model's inputs holding only masked text (the tests check that last part).
+- Next (agent, after L1 passes): L2, KMS Ed25519 signer.
+- Open: no ARCH-ID for L0 or L1.
