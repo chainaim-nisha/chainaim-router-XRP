@@ -135,6 +135,54 @@ export async function withLedger<T>(wsUrl: string, work: (ledger: LedgerRequest)
   }
 }
 
+/** The part of an xrpl.js Client a warm ledger uses; a parameter so tests need no server. */
+export type LedgerClient = Pick<Client, "connect" | "disconnect" | "isConnected" | "request">;
+
+export type WarmLedger = {
+  /** Ledger reads over the warm connection; each read first waits for the connection, reopening it once if it was lost. */
+  ledger: LedgerRequest;
+  /** Resolves when the first connection attempt has finished, whether it worked or not. */
+  settled: Promise<void>;
+  /** Close the connection, whatever state it is in. */
+  close: () => Promise<void>;
+};
+
+/**
+ * Open the ledger connection now, in the background, and hand back reads that
+ * use it (P14 pre-warm). The buyer agent starts this before its first Bedrock
+ * turn, so the connection is usually open by the time the tool pays, instead
+ * of costing a connect inside the tool call. A failed connect is not thrown
+ * here: the first read reports it as "unreachable", as withLedger does.
+ */
+export function warmLedger(wsUrl: string, deps: { client?: LedgerClient } = {}): WarmLedger {
+  const client: LedgerClient = deps.client ?? new Client(wsUrl);
+  let failure: unknown;
+  const settled = client.connect().then(
+    () => undefined,
+    (e: unknown) => {
+      failure = e;
+    },
+  );
+  const reads = ledgerOverClient(client as Client);
+  const ledger: LedgerRequest = async (command, params) => {
+    await settled;
+    if (!client.isConnected()) {
+      try {
+        await client.connect();
+      } catch (e) {
+        const cause = e ?? failure;
+        throw new LedgerError("unreachable", `cannot connect to the XRP Ledger server ${wsUrl}: ${cause instanceof Error ? cause.message : String(cause)}`);
+      }
+    }
+    return reads(command, params);
+  };
+  const close = async (): Promise<void> => {
+    await settled;
+    if (client.isConnected()) await client.disconnect();
+  };
+  return { ledger, settled, close };
+}
+
 /** Who pays: the network, the ledger server the payment is prepared from, and the signer. */
 export type Buyer = { networkName: NetworkName; network: XRPLNetworkId; wsUrl: string; signer: XrplSigner };
 
@@ -192,6 +240,8 @@ export type PayOptions = {
   ledger?: LedgerRequest;
   /** Refuse, before signing, a price above this RLUSD amount. */
   maxAmount?: string;
+  /** Called as each payment phase ends with its name and milliseconds (scripts/timing.ts); never with any text. */
+  onPhase?: (phase: string, ms: number) => void;
 };
 
 /**
@@ -246,10 +296,23 @@ export async function payAndFetch(
   buyer: Buyer,
   options: PayOptions = {},
 ): Promise<Paid> {
-  if (!options.ledger) return withLedger(buyer.wsUrl, (ledger) => payAndFetch(url, init, buyer, { ...options, ledger }));
+  if (!options.ledger) {
+    const connecting = performance.now();
+    return withLedger(buyer.wsUrl, (ledger) => {
+      options.onPhase?.("ledger_connect", performance.now() - connecting);
+      return payAndFetch(url, init, buyer, { ...options, ledger });
+    });
+  }
   const ledger = options.ledger;
+  let mark = performance.now();
+  const lap = (phase: string): void => {
+    const now = performance.now();
+    options.onPhase?.(phase, now - mark);
+    mark = now;
+  };
   const ceiling = options.maxAmount === undefined ? undefined : decimalUnits(options.maxAmount);
   const first = await fetch(url, init);
+  lap("quote_402");
   const header = first.headers.get("payment-required");
   if (first.status !== 402 || !header) return { response: first };
   const required = decodeRequired(header);
@@ -261,16 +324,21 @@ export async function payAndFetch(
   if (ceiling !== undefined && decimalUnits(offer.amount) > ceiling) {
     throw new SetupError(`the price ${offer.amount} RLUSD is above the most this buyer may pay now (${options.maxAmount} RLUSD); nothing was paid`);
   }
+  mark = performance.now();
   await checkNetwork(ledger, buyer);
+  lap("ledger_network");
   const address = buyer.signer.classicAddress;
   const tx = await preparePayment(address, offer, ledger).catch((e: unknown) => {
     if (!(e instanceof Error) || e.message !== NOT_ON_LEDGER) throw e;
     throw new SetupError(`the buyer account ${address} is not on ${buyer.networkName} yet: fund it with XRP and open its RLUSD trust line first; nothing was paid`);
   });
+  lap("ledger_prepare");
   const { signedTxBlob } = await buyer.signer.sign(tx);
   checkSigned(tx, signedTxBlob, address);
   const payment = paymentHeader(offer, signedTxBlob, required.resource);
+  lap("sign");
   const response = await fetch(url, { ...init, headers: { ...init.headers, "PAYMENT-SIGNATURE": payment } });
+  lap("paid_call");
   const receipt = response.headers.get("payment-response");
   const refusal = response.status === 402 ? (refusalReason(response) ?? "the paywall asked for payment again and gave no reason") : undefined;
   return { response, amount: offer.amount, ...(refusal ? { refusal } : {}), receipt: receipt ? decodePaymentResponseHeader(receipt) : undefined };

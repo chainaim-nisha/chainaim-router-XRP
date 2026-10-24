@@ -16,9 +16,17 @@
  * --keep-masked   show the answer with the placeholders left in
  * --no-names      do not mask names found after a label
  * --seed-prefix   read the seed from NAME_TESTNET / NAME_MAINNET (default XRPL_BUYER_SEED)
+ * --doc-types     which document types are read: all (default) or a list of txt,md,pdf,docx,xlsx,csv (F3)
+ * --table-format  labelled (default) or grid: how Excel and CSV rows are written before masking.
+ *                 labelled keeps each column header beside its value, which the gateway's date-of-birth
+ *                 and account detectors need; grid is smaller but weakens that detection
+ * --table-header  first-row (default) or none: whether a table's first row names its columns
+ * --csv-delimiter one character between CSV fields (default ",")
+ * --max-doc-mb    largest document read, in MB (default 20)
  */
 import { parseArgs } from "node:util";
-import { AskRefused, DEFAULT_QUESTION, isEndpoint, maskSummary, PATHS, prepareAsk, readDocument, sendAsk, type PreparedAsk } from "./private-ask-core.ts";
+import { parseDocTypes, TABLE_FORMATS, TABLE_HEADERS, type ExtractOptions, type TableFormat, type TableHeader } from "./extract.ts";
+import { AskRefused, DEFAULT_QUESTION, isEndpoint, loadDocument, maskSummary, PATHS, prepareAsk, sendAsk, type PreparedAsk } from "./private-ask-core.ts";
 
 const { values } = parseArgs({
   options: {
@@ -31,6 +39,11 @@ const { values } = parseArgs({
     "keep-masked": { type: "boolean", default: false },
     "no-names": { type: "boolean", default: false },
     "seed-prefix": { type: "string", default: "XRPL_BUYER_SEED" },
+    "doc-types": { type: "string", default: "all" },
+    "table-format": { type: "string", default: "labelled" },
+    "table-header": { type: "string", default: "first-row" },
+    "csv-delimiter": { type: "string", default: "," },
+    "max-doc-mb": { type: "string", default: "20" },
   },
 });
 
@@ -45,10 +58,28 @@ if (!isEndpoint(endpoint)) fail(2, "--endpoint must be chat, scan or mask");
 const dryRun = values["dry-run"] === true;
 const base = values.url?.replace(/\/+$/, "");
 
+const tableFormat = values["table-format"] as TableFormat;
+if (!(TABLE_FORMATS as readonly string[]).includes(tableFormat)) fail(2, `--table-format must be one of ${TABLE_FORMATS.join(", ")}`);
+const tableHeader = values["table-header"] as TableHeader;
+if (!(TABLE_HEADERS as readonly string[]).includes(tableHeader)) fail(2, `--table-header must be one of ${TABLE_HEADERS.join(", ")}`);
+const csvDelimiter = values["csv-delimiter"] === "\\t" ? "\t" : values["csv-delimiter"];
+if (csvDelimiter.length !== 1 || csvDelimiter === '"') fail(2, "--csv-delimiter must be one character other than a quote (\\t for a tab)");
+const maxDocMb = Number(values["max-doc-mb"]);
+if (!(maxDocMb > 0 && maxDocMb <= 200)) fail(2, "--max-doc-mb must be a number above 0 and at most 200");
+let extract: ExtractOptions;
+try {
+  extract = { types: parseDocTypes(values["doc-types"]), tableFormat, tableHeader, csvDelimiter, maxBytes: Math.floor(maxDocMb * 1024 * 1024) };
+} catch (e) {
+  fail(2, `--doc-types: ${(e as Error).message}`);
+}
+
 let document: string;
+let readDetail = "";
 let prepared: PreparedAsk;
 try {
-  document = readDocument(file);
+  const loaded = await loadDocument(file, extract);
+  document = loaded.text;
+  readDetail = [`${loaded.type}, ${loaded.detail}`, ...loaded.warnings].join("; ");
   if (!dryRun && (!base || !/^https?:\/\//.test(base) || !URL.canParse(base))) throw new AskRefused("--url is required and must be the paywall's http(s) address, e.g. https://PAYWALL");
   prepared = prepareAsk({ document, endpoint, question: values.question, maxTokens: Number(values["max-tokens"]), names: values["no-names"] !== true });
 } catch (e) {
@@ -57,7 +88,7 @@ try {
 }
 
 const summary = maskSummary(prepared.counts);
-console.log(`read ${file} on this computer: ${document.length} characters`);
+console.log(`read ${file} on this computer (${readDetail}): ${document.length} characters`);
 console.log(`masked on this computer: ${summary || "nothing found"}${prepared.cardsRemoved > 0 ? ` (card numbers removed for good: ${prepared.cardsRemoved})` : ""}`);
 console.log("--- what leaves this computer (masked) ---");
 console.log(prepared.masked);

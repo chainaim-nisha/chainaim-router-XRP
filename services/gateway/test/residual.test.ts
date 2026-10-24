@@ -9,7 +9,7 @@ describe("residualHits", () => {
   it("does not read a title before a placeholder, plus the next line's first word, as a name (t02 discharge note, 2026-10-24 01:38Z)", () => {
     assert.deepEqual(kinds("Attending: Dr. <C_PERSON_2>\n\nDiagnosis: type 2 diabetes"), []);
     assert.deepEqual(kinds("Dear Mrs. <PERSON_1>\nThank you"), []);
-    assert.deepEqual(kinds("MR <PERSON_1> Payments"), []);
+    assert.deepEqual(kinds("MR <PERSON_1> Payments"), ["titled_name"], "fail closed: a capitalised word right after a masked name may be a leftover surname");
   });
 
   it("still finds a titled name that was not masked, also across a line break", () => {
@@ -37,6 +37,15 @@ describe("residualHits", () => {
       "totals 100 200 300",
       "Use MS Excel or MS Word",
     ]) assert.deepEqual(kinds(t), [], t);
+  });
+
+  it("does not join a title at a line's end to the next line once a placeholder is removed", () => {
+    const note = "Patient Name: <C_PERSON_1>\nMRN <C_MEDICAL_RECORD_1>\nAadhaar <C_IN_AADHAAR_1>\nAttending: Dr. <C_PERSON_2>\n\nDiagnosis: type 2 diabetes, newly started on insulin.";
+    assert.deepEqual(kinds(note), [], "the masked discharge note is not refused");
+    assert.deepEqual(kinds("Dr. <PERSON_1>\nDischarge medicines:"), []);
+    // Still refused: a name on the same line as the title.
+    assert.deepEqual(kinds("Dr. <C_PERSON_1> Grant"), ["titled_name"], "a surname left after a removed first name");
+    assert.deepEqual(kinds("Dr.\tGrant"), ["titled_name"]);
   });
 
   it("counts per kind across texts and never returns values", () => {

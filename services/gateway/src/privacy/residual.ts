@@ -42,8 +42,10 @@ const CHECKS: Record<ResidualKind, (text: string, minDigits: number) => number> 
   // +1 415 555 0132, +91 (98201) 44907
   intl_phone: (t) => countRuns(t, /\+\d[\d ()-]{6,}\d/g, 8),
   email: (t) => [...t.matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g)].length,
-  // MR AB SAMPLEPERSON, Mrs Samplename, Dr. Grant, Shri Ravi: a title followed by a capitalised word that is not a placeholder
-  titled_name: (t) => [...t.matchAll(/\b(?:Mr|MR|Mrs|MRS|Miss|MISS|Dr|DR|Shri|SHRI|Smt|SMT|Ms\.|MS\.)\.?\s+[A-Z][A-Za-z'-]*/g)].length,
+  // MR AB SAMPLEPERSON, Mrs Samplename, Dr. Grant, Shri Ravi: a title followed by a capitalised word that is not a placeholder.
+  // A line break may separate them only when nothing was masked between ("MR\nSAMPLEPERSON"). After a placeholder (" # "),
+  // only spaces or tabs: "Dr. <C_PERSON_1> Grant" is refused (a leftover surname); "Dr. <C_PERSON_2>" + next line's heading is not.
+  titled_name: (t) => [...t.matchAll(/\b(?:Mr|MR|Mrs|MRS|Miss|MISS|Dr|DR|Shri|SHRI|Smt|SMT|Ms\.|MS\.)\.?(?:(?:[ \t]+#)+[ \t]+|\s+)[A-Z][A-Za-z'-]*/g)].length,
 };
 
 /** Kinds and counts of what looks like personal data in already-masked texts; empty when the policy is off or nothing is found. */

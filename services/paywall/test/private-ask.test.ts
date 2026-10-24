@@ -52,13 +52,18 @@ describe("scripts/private-ask.ts", () => {
     });
   }
 
-  it("needs --file, a text file, and --url when not a dry run", async () => {
+  it("needs --file, a readable document, and --url when not a dry run", async () => {
     assert.equal((await run([])).code, 2);
     const pdf = join(dir, "scan.pdf");
     writeFileSync(pdf, "%PDF");
     const r = await run(["--dry-run", "--file", pdf]);
     assert.equal(r.code, 2);
-    assert.match(r.stderr, /only \.txt and \.md/);
+    assert.match(r.stderr, /is not a PDF file/);
+    const image = join(dir, "photo.png");
+    writeFileSync(image, "not text");
+    const img = await run(["--dry-run", "--file", image]);
+    assert.equal(img.code, 2);
+    assert.match(img.stderr, /is an image; ChainAim cannot read text in images/);
     const noUrl = await run(["--file", file]);
     assert.equal(noUrl.code, 2);
     assert.match(noUrl.stderr, /--url is required/);

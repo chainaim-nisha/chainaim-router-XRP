@@ -202,6 +202,20 @@ Check the whole stack at any time (changes nothing; every FAIL names its fix):
 .\test-console\stack.ps1 -Check
 ```
 
+Without the stack script (manual `docker run`; use this when you need `PAYWALL_PHASE_LOG=on`):
+
+Replace `YOUR_XRPL_PAY_TO` with the paywall's XRPL TestNet address (`r...`, funded and with an RLUSD trust line, see MANUAL_SETUP.md). The payment rail is XRPL/RLUSD since 2026-10-13; the old `AVM_PAY_TO` / `X402_NETWORK` variables are retired:
+
+```powershell
+docker run -d --name ca-paywall --network chainaim-test -e XRPL_NETWORK=testnet -e XRPL_PAY_TO_TESTNET=YOUR_XRPL_PAY_TO -e GATEWAY_URL=http://gateway.railway.internal:8700 -e CHAINAIM_GATEWAY_KEY -e PAYWALL_PHASE_LOG=off -p 127.0.0.1:8080:8080 chainaim-paywall:test
+```
+
+`PAYWALL_PHASE_LOG=on` adds each settled payment's capacity, verify, gateway and settle milliseconds to its `payment_settled` log line (P14); numbers only.
+
+The bare `-e CHAINAIM_GATEWAY_KEY` passes the value from step 4's variable.
+If that variable is empty, the paywall gets the wrong key and the UI later
+fails with 401.
+
 ---
 
 ## 7. Start the gateway

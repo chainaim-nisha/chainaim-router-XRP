@@ -1,9 +1,11 @@
 @echo off
-rem ChainAim local test console. Starts the four test containers, waits for the
-rem gateway, then serves http://127.0.0.1:8730. Closing this window stops the
-rem console; the containers keep running until "docker stop" or a Docker restart.
+rem ChainAim local test console. Starts the four test containers and the
+rem tenant's own Presidio ("presidio", 127.0.0.1:5002, used by the buyer agent's
+rem prompt masking), waits for the gateway, then serves http://127.0.0.1:8730.
+rem Closing this window stops the console; the containers keep running until
+rem "docker stop" or a Docker restart.
 title ChainAim test console
-docker start ca-presidio ca-openrouter-stub ca-gateway ca-paywall >nul
+docker start ca-presidio ca-openrouter-stub ca-gateway ca-paywall presidio >nul
 if errorlevel 1 (
   echo Docker could not start the test containers. Is Docker Desktop running?
   pause

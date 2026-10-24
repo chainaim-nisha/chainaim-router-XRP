@@ -3,7 +3,8 @@
  * path shared by the command line (scripts/private-ask.ts) and the buyer
  * agent's tool (scripts/agent-core.ts).
  *
- *   readDocument   read a .txt/.md file on this machine
+ *   loadDocument   read a .txt/.md/.pdf/.docx/.xlsx/.csv file on this machine (scripts/extract.ts, F3)
+ *   readDocument   read a .txt/.md file on this machine (the pre-F3 path, kept for any caller still on it)
  *   prepareAsk     mask the question and the document here, self-check, build the body
  *   sendAsk        pay the paywall's RLUSD price and send only the masked body;
  *                  give back the answer both masked and restored
@@ -16,6 +17,7 @@
 import { readFileSync } from "node:fs";
 import { extname } from "node:path";
 import { detect, maskText, restore } from "./client-mask.ts";
+import { DocumentRefused, extractDocument, type ExtractOptions, type Extracted } from "./extract.ts";
 import type { Buyer, PayOptions } from "./xrpl.ts";
 
 export const PATHS = { chat: "/v1/chat/completions", scan: "/v1/privacy/scan", mask: "/v1/privacy/mask" } as const;
@@ -56,6 +58,21 @@ export function readDocument(file: string): string {
   return document;
 }
 
+/**
+ * A document's text, read on this machine (F3): plain text, PDF, Word, Excel
+ * or CSV, as scripts/extract.ts reads it. A file it cannot read is refused
+ * (AskRefused, exit code 2) before anything is masked, sent or paid. The text
+ * still holds every personal value: prepareAsk masks it.
+ */
+export async function loadDocument(file: string, options: ExtractOptions = {}): Promise<Extracted> {
+  try {
+    return await extractDocument(file, options);
+  } catch (e) {
+    if (e instanceof DocumentRefused) throw new AskRefused(e.message);
+    throw e;
+  }
+}
+
 export type AskInput = {
   document: string;
   endpoint: Endpoint;
@@ -65,6 +82,13 @@ export type AskInput = {
   maxTokens?: number;
   /** Mask names found after a label (default true). */
   names?: boolean;
+  /**
+   * Chat only. false asks the gateway to keep its own placeholders in the answer
+   * (`chainaim_restore: false`), so a value the gateway caught but this machine's
+   * masker missed is never put back into text that may go on to another model.
+   * Unset or true: the gateway restores them (its default; the option is not sent).
+   */
+  serverRestore?: boolean;
 };
 
 export type PreparedAsk = {
@@ -94,7 +118,10 @@ export function prepareAsk(input: AskInput): PreparedAsk {
   // Self-check before anything leaves: the masked text must hold nothing this machine would mask again.
   if (detect(masked, options).length > 0) throw new AskRefused("refusing to send: the masked text still holds a value that should be masked; nothing was sent", 1);
   if (masked.length > LIMITS[input.endpoint]) throw new AskRefused(`the text is ${masked.length} characters after masking; ${input.endpoint} takes at most ${LIMITS[input.endpoint]}; nothing was sent`);
-  const body = input.endpoint === "chat" ? { model: "chainaim/auto", messages: [{ role: "user", content: masked }], max_tokens: maxTokens } : { text: masked };
+  const body =
+    input.endpoint === "chat"
+      ? { model: "chainaim/auto", messages: [{ role: "user", content: masked }], max_tokens: maxTokens, ...(input.serverRestore === false ? { chainaim_restore: false } : {}) }
+      : { text: masked };
   return { endpoint: input.endpoint, masked, bodyText: JSON.stringify(body), map, counts, cardsRemoved };
 }
 
@@ -127,6 +154,29 @@ export type AskOutcome = {
   receipt?: { success: boolean; transaction: string; network: string; payer?: string | null };
 };
 
+/** The longest refusal reason passed on from ChainAim. */
+export const MAX_REASON_CHARS = 400;
+
+/**
+ * ChainAim's reason for refusing a call, from the body of a refused response
+ * (`{ "error": { "message": "..." } }`, the gateway's error shape). The
+ * gateway never puts request text in it; this machine still drops it when its
+ * own masker would find a personal value in it. Undefined when there is none.
+ */
+export function refusalReason(raw: string | undefined, options: { names?: boolean } = {}): string | undefined {
+  if (raw === undefined) return undefined;
+  let message: unknown;
+  try {
+    message = (JSON.parse(raw) as { error?: { message?: unknown } } | null)?.error?.message;
+  } catch {
+    return undefined;
+  }
+  if (typeof message !== "string") return undefined;
+  const text = message.replace(/\s+/g, " ").trim().slice(0, MAX_REASON_CHARS);
+  if (text === "") return undefined;
+  return detect(text, { names: options.names !== false }).length > 0 ? undefined : text;
+}
+
 /** Paying, as scripts/xrpl.ts does it; a parameter so the paying code is loaded only when a call is paid. */
 export type PayFn = typeof import("./xrpl.ts").payAndFetch;
 
@@ -140,6 +190,7 @@ export async function sendAsk(base: string, prepared: PreparedAsk, buyer: Buyer,
   const { response: r, amount, refusal, receipt } = await pay(url, { method: "POST", headers: { "content-type": "application/json" }, body: prepared.bodyText }, buyer, {
     ...(options.ledger ? { ledger: options.ledger } : {}),
     ...(options.maxAmount !== undefined ? { maxAmount: options.maxAmount } : {}),
+    ...(options.onPhase ? { onPhase: options.onPhase } : {}),
   });
   const chainaimHeaders: Record<string, string> = {};
   r.headers.forEach((value, name) => {
