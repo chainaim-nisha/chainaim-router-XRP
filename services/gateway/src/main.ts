@@ -42,6 +42,8 @@ const USAGE = `chainaim-gateway [flags]
                              ${EXTRA_ENTITY_GROUPS.join(",")}
                              (default = ${DEFAULT_EXTRA_GROUPS.join(",")})
   --residual-guard on|off    refuse a request when masked text still looks personal (default on)
+  --restore-lenient on|off   also restore placeholders a model rewrote: no brackets, other case, (), [] or {} (default on)
+  --placeholder-instruction on|off  ask the model to copy placeholders exactly, when the request holds any (default on)
   --residual-checks LIST     all, or any of ${RESIDUAL_CHECKS.join(",")}  (default all)
   --residual-min-digits N    fewest digits that count as an identifier   (default 9)
   --openrouter-base-url URL  OpenRouter API root                         (default https://openrouter.ai)
@@ -93,6 +95,8 @@ const OPTIONS = {
   "presidio-check-ms": { type: "string", default: "30000" },
   "extra-entities": { type: "string", default: "default" },
   "residual-guard": { type: "string", default: "on" },
+  "restore-lenient": { type: "string", default: "on" },
+  "placeholder-instruction": { type: "string", default: "on" },
   "residual-checks": { type: "string", default: "all" },
   "residual-min-digits": { type: "string", default: "9" },
   "openrouter-base-url": { type: "string", default: "https://openrouter.ai" },
@@ -117,6 +121,7 @@ export function parseFlags(argv: string[]) {
   if (source !== "catalog" && source !== "openrouter-free") throw new Error("--model-source must be catalog or openrouter-free");
   if (v.jev !== "on" && v.jev !== "off") throw new Error("--jev must be on or off");
   if (v["residual-guard"] !== "on" && v["residual-guard"] !== "off") throw new Error("--residual-guard must be on or off");
+  for (const name of ["restore-lenient", "placeholder-instruction"] as const) if (v[name] !== "on" && v[name] !== "off") throw new Error(`--${name} must be on or off`);
   if (!ENV_NAME.test(v["openrouter-key-env"]!)) throw new Error("--openrouter-key-env must be an environment variable NAME, not a key");
   for (const name of ["presidio-url", "openrouter-base-url"] as const) {
     if (!URL.canParse(v[name]!)) throw new Error(`--${name} must be a URL`);
@@ -146,6 +151,8 @@ export function parseFlags(argv: string[]) {
       checks: parseResidualChecks(v["residual-checks"]!),
       minDigits: int("residual-min-digits", v["residual-min-digits"]!, 4),
     },
+    restoreLenient: v["restore-lenient"] === "on",
+    placeholderInstruction: v["placeholder-instruction"] === "on",
     openRouterBaseUrl: v["openrouter-base-url"]!.replace(/\/+$/, ""),
     openRouterKeyEnv: v["openrouter-key-env"]!,
     jev: v.jev === "on",
@@ -222,7 +229,7 @@ async function main(): Promise<void> {
       deny: new ExpiringSet(f.denyCacheMs),
       jev,
       ledger,
-      chat: { maxOutputTokens: f.maxOutputTokens, maxAttempts: f.maxAttempts, attemptTimeoutMs: f.attemptTimeoutMs, healthFlagThreshold: f.healthFlagThreshold, residual: f.residual },
+      chat: { maxOutputTokens: f.maxOutputTokens, maxAttempts: f.maxAttempts, attemptTimeoutMs: f.attemptTimeoutMs, healthFlagThreshold: f.healthFlagThreshold, residual: f.residual, restoreLenient: f.restoreLenient, placeholderInstruction: f.placeholderInstruction },
     },
     { maxBodyBytes: f.maxBodyBytes, gatewayKey },
   );
@@ -232,7 +239,7 @@ async function main(): Promise<void> {
     console.log(
       `[chainaim-gateway] listening on http://${f.host}:${port}  source=${f.modelSource} models=${source.models().length} ` +
         `jev=${jev ? "on" : "off"} presidio=${presidio.url} extra-entities=${f.extraEntities.join(",") || "none"} ` +
-        `residual=${f.residual.enabled ? `${f.residual.checks.join(",")}/${f.residual.minDigits}` : "off"} ledger=${ledger.enabled ? f.ledgerDir : "off"} auth=${gatewayKey ? "on" : "off"}`,
+        `residual=${f.residual.enabled ? `${f.residual.checks.join(",")}/${f.residual.minDigits}` : "off"} restore-lenient=${f.restoreLenient ? "on" : "off"} placeholder-instruction=${f.placeholderInstruction ? "on" : "off"} ledger=${ledger.enabled ? f.ledgerDir : "off"} auth=${gatewayKey ? "on" : "off"}`,
     );
   });
   const shutdown = () => {

@@ -88,8 +88,10 @@ describe("launch gate: nothing identifying leaves, masking round-trips, the ledg
     assert.equal(r.status, 200);
     const sent = or.chatBodies.slice(before);
     assert.deepEqual(leaked(JSON.stringify(sent)), []);
-    const history = sent[0].messages as { tool_calls?: { function: { arguments: string } }[] }[];
-    assert.deepEqual(JSON.parse(history[1].tool_calls![0].function.arguments), { patient: "<PERSON_2>", file: "C:\\records\\<MEDICAL_RECORD_1>.txt", phone: "<PHONE_NUMBER_1>" });
+    const history = sent[0].messages as { role: string; tool_calls?: { function: { arguments: string } }[] }[];
+    // The model may get the copy-placeholders instruction first, so find the assistant turn rather than count positions.
+    const assistant = history.find((m) => m.role === "assistant" && m.tool_calls)!;
+    assert.deepEqual(JSON.parse(assistant.tool_calls![0].function.arguments), { patient: "<PERSON_2>", file: "C:\\records\\<MEDICAL_RECORD_1>.txt", phone: "<PHONE_NUMBER_1>" });
     const call = (await r.json()).choices[0].message.tool_calls[0];
     assert.equal(JSON.parse(call.function.arguments).query, 'call lookup for Jane "JR" Roe at C:\\records\\991122.txt');
   });
@@ -112,8 +114,9 @@ describe("launch gate: nothing identifying leaves, masking round-trips, the ledg
     const sent = or.chatBodies.slice(chatBefore);
     assert.equal(sent.length, 1);
     assert.deepEqual(leaked(JSON.stringify(sent)), [], "no identifier reached the model");
-    const history = sent[0].messages as { tool_calls?: { function: { arguments: string } }[] }[];
-    assert.deepEqual(JSON.parse(history[1].tool_calls![0].function.arguments), { "<EMAIL_ADDRESS_1>": { access: "owner" }, "<PERSON_1>": "approved" });
+    const history = sent[0].messages as { role: string; tool_calls?: { function: { arguments: string } }[] }[];
+    const assistant = history.find((m) => m.role === "assistant" && m.tool_calls)!;
+    assert.deepEqual(JSON.parse(assistant.tool_calls![0].function.arguments), { "<EMAIL_ADDRESS_1>": { access: "owner" }, "<PERSON_1>": "approved" });
     assert.deepEqual(sent[0].provider, { data_collection: "allow" });
     const jevCalls = or.decisionBodies.slice(jevBefore);
     assert.equal(jevCalls.length, 1, "not PHI, so Jev classifies it");

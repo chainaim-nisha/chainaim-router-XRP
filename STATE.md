@@ -148,3 +148,34 @@ Still open: the Crossmark web page payment; Open Question 4 (Bazaar); `RUN-ON-AN
 - Next (choose): run leak-check on a real statement with a values file kept outside the repo; or the deferred work (wallet created once and reused; packages/, prechecks/, hack/ layout).
 - 2026-10-24 01:05 IST: M1b (private chat answers keep placeholders; `KEEP_PLACEHOLDERS` in index.html, `chainaim_restore` in the gateway) and M1c (place names not masked by default; `--extra-entities all` adds them) PASSED on the PC: 296/296 tests; local CPU models (`ollama-cpu-8gb`) answered with `<PERSON_1>`/`<PERSON_2>` from the sample PDF. All still uncommitted.
 - Open: the buyer agent's own Bedrock prompt is not masked (agent-core.ts header); Word/Excel uploads need the extractor service; company and neighbourhood names are not detected.
+
+## 2026-10-24 — M1d: real statement values scrubbed (code done, PC rebuild and release pending)
+
+- Done (BUILD_LOG.md M1d): the owner's real account number and two titled names replaced with synthetic values in 7 files (incl. the tracked DESIGN/xrplh-5 doc); 0 left in the working tree; 296/296 in the Linux shell on the PC.
+- Still exposed: tag v1.0.2 (and v1.0.0/v1.0.1 if they hold them) and every commit containing those lines on `private2`. Removing them from history is destructive and the owner's decision.
+- Next (owner): MANUAL_SETUP.md "2026-10-24 — M1d" steps 1 to 4 (Windows npm test, rebuild, canary, commit + tag v1.0.3 + push to private2).
+- Next (agent, after that): NEXT STEP 2, the HTTP 422 `digits 1` on the owner's real statement (needs the shape only, digits written as d).
+- Open: no ARCH-ID for M1d. PROJECT_CONTEXT.md still says locations are masked by default; since M1c they are not (`--extra-entities all` adds them).
+- M1d PC run PASSED (2026-10-24 03:44 IST): Windows `npm test` 296/296; gateway image rebuilt; start-up test with the synthetic values passed against the real Presidio; local/qwen2.5-3b answered. Environment fixed on the way: gateway key file copied from PRIVAI1 (gitignored), `qwen2.5:1.5b-instruct` pulled, stopped containers started. Remaining: owner commit + tag v1.0.3 + push; history-rewrite decision.
+
+## 2026-10-24 — S1: stack.ps1 written; PC run pending
+
+- ca-paywall on this PC is the Algorand-era container (image 2026-10-17, AVM_PAY_TO/X402_NETWORK), so the console's Crossmark payment quotes 10000; do not pay until it is replaced.
+- Done: `test-console/stack.ps1` (parse and guard paths checked); RUN-ON-ANOTHER-PC.md step 6 updated.
+- Next (owner): MANUAL_SETUP.md "2026-10-24 — S1" steps 1-3, then the paid chat in the console with Crossmark (on Wi-Fi).
+- Then: commit M1d + S1, tag v1.0.3, push to private2; history-rewrite decision.
+- Open: no ARCH-ID for S1. docs/setup-end-to-end.md step 5 still says the pay-to address is "58 capital letters and digits" (Algorand wording).
+
+## 2026-10-24 — P1/P2: paying without Crossmark
+
+- B01 `racuvQQJSCD2YUxR5qLstLBfbCkxj53dcU`: 100 XRP, RLUSD trust line (tx A689DDB3...48F2), seed in C:\PRIV-AI-SECRETS\testnet.env (owner only). C01 `rpViNCWEsanJ2Yyu8qzPNA5Ux5Vy1j3ETG` (Crossmark, 100 XRP, no trust line): Crossmark cannot submit from this Chrome profile.
+- New `buy-rlusd.ts` (11 tests pass in the Linux shell); full paywall `npm test` not yet run.
+- Next (owner): MANUAL_SETUP.md "2026-10-24 — P2" steps 1, 3, 4; then the paid private chat as B01: `node scripts\private-ask.ts --file ..\..\rig\tenants\t01\docs\supplier-dispute.txt --url http://127.0.0.1:8080 --seed-prefix XRPL_SEED_B01` with the seed loaded.
+- Open: no ARCH-ID for P1/P2. private-ask.ts has no --env-file (the seed is set in the window for one command).
+
+## 2026-10-24 — R1 + E2E: done
+- R1 (lenient restore, honest counts, x-chainaim-unresolved, copy-placeholders instruction) and e2e-private-ask.ts: gateway 315/315 (Linux), paywall 125/125 (Windows), gateway image rebuilt, E2E PASSED 8/8 (tx 8F76668F...CEE5).
+- Next (owner): commit everything (M1d, stack.ps1, RUN-ON-ANOTHER-PC.md, buy-rlusd, balances, R1, e2e, logs), tag v1.0.3, push to private2. Answer: were the three scrubbed values real? (decides the history rewrite).
+- Optional: rerun E2E with --question about the people, to see lenient restore live.
+- 2026-10-24 01:43Z: R1b (gateway ignores client <C_...> in its count) and R2 (residual false positive "Dr. <placeholder>" + next line) fixed; gateway 319/319; E2E t02 (PHI) PASSED 8/8 with names restored (tx E8DC51C0...D4F4). Remaining: optional E2E t03; commit + tag v1.0.3 + push; real-values question.
+- Breadcrumb: DESIGN/xrplh-6-ASK-PAYMENT-ATOMICITY-2026-10-23T2102.md, how the paid ask and its payment are tied (x402 exact: verify, serve, settle, release) and two narrow "paid, no answer" windows (W1 caller leaves during settle; W2 facilitator error after submit). Fix proposed, not started; needs an ARCH-ID.

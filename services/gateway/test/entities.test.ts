@@ -20,14 +20,14 @@ function matches(group: keyof typeof EXTRA_AD_HOC_RECOGNIZERS, text: string, sta
 
 describe("extra patterns", () => {
   it("bank_account: the NZ format stands alone; other shapes are candidates that need a context word", () => {
-    assert.deepEqual(matches("bank_account", "Account 06-0193-0921569-00 balance", true), ["06-0193-0921569-00"]);
+    assert.deepEqual(matches("bank_account", "Account 12-3456-7890123-00 balance", true), ["12-3456-7890123-00"]);
     assert.ok(matches("bank_account", "acct 991200345678").includes("991200345678"));
     assert.ok(matches("bank_account", "BSB 062-000 12345678").includes("062-000 12345678"));
     assert.deepEqual(matches("bank_account", "paid 1,250.00 on 05/01/2024", true), []);
   });
 
   it("titled_name: title, initials, then one or two name words", () => {
-    assert.deepEqual(matches("titled_name", "MR TL ZENGENI & MRS L DANGA"), ["MR TL ZENGENI", "MRS L DANGA"]);
+    assert.deepEqual(matches("titled_name", "MR AB SAMPLEPERSON & MRS C SAMPLENAME"), ["MR AB SAMPLEPERSON", "MRS C SAMPLENAME"]);
     assert.ok(matches("titled_name", "Dr. Alan Grant prescribed")[0].startsWith("Dr. Alan Grant"));
     assert.deepEqual(matches("titled_name", "Use MS Excel"), []);
   });

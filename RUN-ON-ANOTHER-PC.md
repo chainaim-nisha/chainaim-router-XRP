@@ -185,15 +185,22 @@ docker run -d --name ca-openrouter-stub --network chainaim-test --network-alias 
 > Run this in PowerShell, not Git Bash. Git Bash rewrites `/spy/...` into a
 > Windows path and the container exits immediately.
 
-Replace `YOUR_TESTNET_ADDRESS` with the address from step 5:
+Start the paywall with the stack script (it builds nothing unless asked, sets the
+XRPL settings and the gateway key from `test-console/local-gateway-key.txt`):
 
 ```powershell
-docker run -d --name ca-paywall --network chainaim-test -e AVM_PAY_TO=YOUR_TESTNET_ADDRESS -e X402_NETWORK=testnet -e GATEWAY_URL=http://gateway.railway.internal:8700 -e CHAINAIM_GATEWAY_KEY -p 127.0.0.1:8080:8080 chainaim-paywall:test
+.\test-console\stack.ps1 -Recreate paywall -XrplNetwork testnet -PayTo YOUR_TESTNET_ADDRESS
 ```
 
-The bare `-e CHAINAIM_GATEWAY_KEY` passes the value from step 4's variable.
-If that variable is empty, the paywall gets the wrong key and the UI later
-fails with 401.
+`YOUR_TESTNET_ADDRESS` is the XRPL pay-to address (r...) from step 5. The old
+Algorand command (`AVM_PAY_TO`, `X402_NETWORK`) no longer works: the paywall
+reads `XRPL_NETWORK` and `XRPL_PAY_TO_TESTNET`.
+
+Check the whole stack at any time (changes nothing; every FAIL names its fix):
+
+```powershell
+.\test-console\stack.ps1 -Check
+```
 
 ---
 

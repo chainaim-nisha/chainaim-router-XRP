@@ -16,9 +16,9 @@ Legend: **[READ]** verified in code tonight · **[CHAT]** from a prior chat, not
 - Effect: any personal value inside a tool description, JSON-schema description/enum/default, or a stop string reaches the model unmasked.
 
 ### 1b. Detection gaps [READ entities.ts]
-- No bank-account type: `06-0193-0921569-00` matches nothing in `DETECTED_ENTITIES`.
+- No bank-account type: `12-3456-7890123-00` matches nothing in `DETECTED_ENTITIES`.
 - `LOCATION`, `DATE_TIME` deliberately excluded → street addresses and dates of birth pass.
-- Names rely on Presidio NER only; titled all-caps names (`MR TL ZENGENI & MRS L DANGA`) have no backup rule. [ASSUME NER misses these — observed in tonight's masking chat, not re-tested.]
+- Names rely on Presidio NER only; titled all-caps names (`MR AB SAMPLEPERSON & MRS C SAMPLENAME`) have no backup rule. [ASSUME NER misses these — observed in tonight's masking chat, not re-tested.]
 - Start-up canary covers name/email/MRN only [CHAT], so a broken new rule would not fail start-up.
 
 ### 1c. No fail-closed final check [READ chat.ts]

@@ -12,7 +12,7 @@ import { classify, clientPlaceholderTypes, countTypes, type Classes, type DataCl
 import { collectTexts, EXACT_NAME, Masker, mapConversation, mapRequestFields, withinValue, type Message, type ScannedFields } from "./privacy/mask.ts";
 import { PresidioError, type PresidioClient } from "./privacy/presidio.ts";
 import { DEFAULT_RESIDUAL, residualHits, residualMessage, type ResidualHit, type ResidualPolicy } from "./privacy/residual.ts";
-import { restoreCompletion } from "./privacy/restore.ts";
+import { hasPlaceholder, PLACEHOLDER_INSTRUCTION, restoreCompletion } from "./privacy/restore.ts";
 import { classifyTask, type TaskClass, type TaskInput } from "./routing/classify.ts";
 import type { ModelSource } from "./routing/freepool.ts";
 import type { JevClient } from "./routing/jev.ts";
@@ -36,6 +36,10 @@ export type ChatOptions = {
   healthFlagThreshold: number;
   /** The check after masking (privacy/residual.ts); default: on, every check, 9 digits. */
   residual?: ResidualPolicy;
+  /** Restore placeholders a model rewrote (no brackets, other case, (), [] or {}); default true (--restore-lenient). */
+  restoreLenient?: boolean;
+  /** Ask the model to copy placeholders exactly, as a first system message, when the masked request holds any; default true (--placeholder-instruction). */
+  placeholderInstruction?: boolean;
 };
 export type ChatDeps = {
   presidio: PresidioClient;
@@ -64,6 +68,10 @@ export type ChatRecord = {
   chain?: string[];
   served?: string;
   unresolvedPlaceholders?: number;
+  /** Placeholders restored from a form the model rewrote (counts only). */
+  lenientRestores?: number;
+  /** true when the copy-placeholders instruction was sent to the model. */
+  placeholderInstruction?: boolean;
   /** false when the caller asked to keep the placeholders in the answer (chainaim_restore: false). */
   restored?: boolean;
   /** What the residual check found after masking: kinds and counts, never values. */
@@ -298,6 +306,11 @@ type ChainOutcome = { ok: true; model: string; completion: Record<string, unknow
 /** Step 7 (spec section 7): every attempt counts against the quota; account limits and a rejected key stop the chain. */
 async function callChain(d: Decision, p: Prepared, deps: ChatDeps, signal: AbortSignal, record: ChatRecord): Promise<ChainOutcome> {
   const body = shapeBody(p.v.raw, p.masked, p.v.maxTokens, p.maskedFields);
+  if (deps.chat.placeholderInstruction !== false && collectTexts([p.masked, p.maskedFields]).some(hasPlaceholder)) {
+    // Added after classification, so Jev never sees it; it holds no request text.
+    body.messages = [{ role: "system", content: PLACEHOLDER_INSTRUCTION }, ...(body.messages as unknown[])];
+    record.placeholderInstruction = true;
+  }
   const dataCollection = d.classes.policy.dataCollection;
   const attempts = record.attempts;
   for (const model of d.chain) {
@@ -360,9 +373,10 @@ export async function runChat(body: unknown, deps: ChatDeps, signal: AbortSignal
   record.served = outcome.model;
   record.restored = v.restore;
   if (v.restore) {
-    const stats = { unresolved: 0 };
-    restoreCompletion(outcome.completion, p.masker.map, stats);
+    const stats: { unresolved: number; lenient?: number } = { unresolved: 0 };
+    restoreCompletion(outcome.completion, p.masker.map, stats, { lenient: deps.chat.restoreLenient !== false });
     record.unresolvedPlaceholders = stats.unresolved;
+    if (stats.lenient) record.lenientRestores = stats.lenient;
   }
   return { ok: true, completion: outcome.completion, stream: v.stream, record };
 }

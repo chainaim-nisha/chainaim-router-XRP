@@ -138,7 +138,7 @@ describe("the residual check, end to end", () => {
   });
 
   it("checks the tools as well as the messages", async () => {
-    const r = await chat({ ...ask, tools: [{ type: "function", function: { name: "f", description: "Statement for MR ZENGENI" } }] });
+    const r = await chat({ ...ask, tools: [{ type: "function", function: { name: "f", description: "Statement for MR SAMPLEPERSON" } }] });
     assert.equal(r.status, 422);
     assert.equal(or.chatBodies.length, 0);
   });

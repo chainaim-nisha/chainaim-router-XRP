@@ -3,6 +3,7 @@
  * wired like production (Presidio, pool, model source, scores, quota, Jev),
  * with stubs standing in for Presidio and OpenRouter.
  */
+import type { ChatOptions } from "../src/chat.ts";
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -98,6 +99,8 @@ export type TestGatewayOptions = {
   gatewayKey?: string;
   /** The residual check (default: on, every check, 9 digits). */
   residual?: ResidualPolicy;
+  /** Extra chat options (restoreLenient, placeholderInstruction). */
+  chatExtra?: Partial<Pick<ChatOptions, "restoreLenient" | "placeholderInstruction">>;
 };
 
 export type TestGateway = {
@@ -143,7 +146,7 @@ export async function startTestGateway(o: TestGatewayOptions): Promise<TestGatew
       deny,
       jev,
       ledger: new Ledger(ledgerDir),
-      chat: { maxOutputTokens: 1024, maxAttempts: 3, attemptTimeoutMs: o.attemptTimeoutMs ?? 2000, healthFlagThreshold: 0.5, ...(o.residual ? { residual: o.residual } : {}) },
+      chat: { maxOutputTokens: 1024, maxAttempts: 3, attemptTimeoutMs: o.attemptTimeoutMs ?? 2000, healthFlagThreshold: 0.5, ...(o.residual ? { residual: o.residual } : {}), ...(o.chatExtra ?? {}) },
     },
     { maxBodyBytes: 1 << 20, gatewayKey: o.gatewayKey },
   );

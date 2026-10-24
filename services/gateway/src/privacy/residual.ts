@@ -35,14 +35,14 @@ function countRuns(text: string, re: RegExp, min: number): number {
 }
 
 const CHECKS: Record<ResidualKind, (text: string, minDigits: number) => number> = {
-  // 991200345678, 06-0193-0921569-00, 12/0034/5678: digits joined by nothing, "-" or "/" ("." is left out so 1234567.89 is an amount)
+  // 991200345678, 12-3456-7890123-00, 12/0034/5678: digits joined by nothing, "-" or "/" ("." is left out so 1234567.89 is an amount)
   digits: (t, min) => countRuns(t, /\d+(?:[-/]\d+)*/g, min),
   // 2345 6789 0123, 4111 1111 1111 1111, 98201 44907: groups of 3 to 5 digits split by single spaces
   spaced_digits: (t, min) => countRuns(t, /\b\d{3,5}(?: \d{3,5})+\b/g, Math.max(min, 10)),
   // +1 415 555 0132, +91 (98201) 44907
   intl_phone: (t) => countRuns(t, /\+\d[\d ()-]{6,}\d/g, 8),
   email: (t) => [...t.matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g)].length,
-  // MR TL ZENGENI, Mrs Danga, Dr. Grant, Shri Ravi: a title followed by a capitalised word that is not a placeholder
+  // MR AB SAMPLEPERSON, Mrs Samplename, Dr. Grant, Shri Ravi: a title followed by a capitalised word that is not a placeholder
   titled_name: (t) => [...t.matchAll(/\b(?:Mr|MR|Mrs|MRS|Miss|MISS|Dr|DR|Shri|SHRI|Smt|SMT|Ms\.|MS\.)\.?\s+[A-Z][A-Za-z'-]*/g)].length,
 };
 
@@ -51,7 +51,9 @@ export function residualHits(texts: readonly string[], policy: ResidualPolicy): 
   if (!policy.enabled) return [];
   const counts = new Map<ResidualKind, number>();
   for (const text of texts) {
-    const clean = text.replace(PLACEHOLDERS, " ").replace(ISO_DATE_TIME, " ");
+    // A placeholder becomes a neutral non-letter mark, not a space: as a space, "Dr. <C_PERSON_2>" followed by a
+    // line starting with a capital ("Diagnosis") read as the titled name "Dr. Diagnosis". " # " still splits digit runs.
+    const clean = text.replace(PLACEHOLDERS, " # ").replace(ISO_DATE_TIME, " ");
     for (const kind of policy.checks) {
       const n = CHECKS[kind](clean, policy.minDigits);
       if (n > 0) counts.set(kind, (counts.get(kind) ?? 0) + n);

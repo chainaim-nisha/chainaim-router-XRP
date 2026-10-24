@@ -135,7 +135,7 @@ export const EXTRA_AD_HOC_RECOGNIZERS: Readonly<Record<Exclude<ExtraEntityGroup,
     supported_language: "en",
     supported_entity: "BANK_ACCOUNT",
     patterns: [
-      // NZ-style bank-branch-account-suffix, e.g. 06-0193-0921569-00: specific enough on its own
+      // NZ-style bank-branch-account-suffix, e.g. 12-3456-7890123-00: specific enough on its own
       { name: "nz account", regex: "\\b\\d{2}-\\d{4}-\\d{7}-\\d{2,3}\\b", score: 0.6 },
       // grouped digits (BSB 062-000 12345678, sort code 20-00-00 12345678): needs a context word
       { name: "grouped account (needs context)", regex: "\\b\\d{2,6}(?:[- ]\\d{2,10}){1,3}\\b", score: 0.1 },
@@ -148,7 +148,7 @@ export const EXTRA_AD_HOC_RECOGNIZERS: Readonly<Record<Exclude<ExtraEntityGroup,
     name: "ChainAim titled name",
     supported_language: "en",
     supported_entity: "PERSON",
-    // MR TL ZENGENI, Mrs L Danga, Dr. A. Kumar, Shri Ravi Shankar: a title, up to three initials, then one or two name words
+    // MR AB SAMPLEPERSON, Mrs C Samplename, Dr. A. Kumar, Shri Ravi Shankar: a title, up to three initials, then one or two name words
     patterns: [{ name: "title + name", regex: "\\b(?:mr|mrs|miss|dr|shri|smt|ms\\.)\\.?\\s+(?:[a-z]\\.?\\s+){0,3}[a-z][a-z'-]+(?:\\s+[a-z][a-z'-]+)?\\b", score: 0.6 }],
   },
   street_address: {
@@ -194,8 +194,8 @@ const BASE_CANARY = { text: "Patient Jane Roe, MRN 991122, can be reached at jan
   { value: "991122", types: ["MEDICAL_RECORD"] },
 ] };
 const EXTRA_CANARY: Readonly<Record<ExtraEntityGroup, { text: string; value: string; types: string[] }>> = {
-  bank_account: { text: "Account 06-0193-0921569-00.", value: "06-0193-0921569-00", types: ["BANK_ACCOUNT"] },
-  titled_name: { text: "Statement for MR TL ZENGENI.", value: "ZENGENI", types: ["PERSON"] },
+  bank_account: { text: "Account 12-3456-7890123-00.", value: "12-3456-7890123-00", types: ["BANK_ACCOUNT"] },
+  titled_name: { text: "Statement for MR AB SAMPLEPERSON.", value: "SAMPLEPERSON", types: ["PERSON"] },
   street_address: { text: "Post to 42 Rosewood Avenue.", value: "Rosewood", types: ["STREET_ADDRESS", "LOCATION"] },
   dob: { text: "Date of birth 14/03/1981.", value: "14/03/1981", types: ["DATE_OF_BIRTH"] },
   location: { text: "Branch in London.", value: "London", types: ["LOCATION"] },

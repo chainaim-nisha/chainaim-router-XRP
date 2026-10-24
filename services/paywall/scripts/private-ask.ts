@@ -97,7 +97,7 @@ if (!outcome.ok) {
     console.log(keep ? "--- answer (placeholders kept) ---" : "--- answer (names put back on this computer) ---");
     console.log(keep ? outcome.answerMasked : outcome.answerRestored);
     console.log("--- end ---");
-    if (!keep && outcome.unresolved > 0) console.log(`${outcome.unresolved} placeholder(s) in the answer were not ones this computer made, so they were left as they are`);
+    if (!keep && outcome.unresolved > 0) console.log(`WARNING: ${outcome.unresolved} placeholder(s) in the answer could not be put back (the model changed or invented them); they are shown as they came`);
   }
   console.log(`payment ${JSON.stringify(outcome.receipt)}`);
 } else {

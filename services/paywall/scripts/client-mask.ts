@@ -159,19 +159,67 @@ export function maskText(text: string, options: MaskOptions = {}): Masked {
   return mask(text, detect(text, options));
 }
 
-/** <C_TYPE_n>, in any case, with spaces allowed inside the brackets. The server's own <TYPE_n> is left alone. */
-const CLIENT_PLACEHOLDER = /<\s*(C_[A-Za-z][A-Za-z_]*?_\d+)\s*>/gi;
+/** <TYPE_n> or <C_TYPE_n>, in any case, with spaces allowed inside the brackets. Only <C_...> is this computer's. */
+const BRACKETED = "<\\s*(?<b>[A-Za-z][A-Za-z_]*?_\\d+)\\s*>";
+const BEFORE = "(?<![A-Za-z0-9_])";
+const AFTER = "(?![A-Za-z0-9_])";
 
-/** Put the original values back; a placeholder not in the map stays as it is and is counted. */
-export function restore(text: string, map: Readonly<Record<string, string>>): { text: string; unresolved: number } {
+export type RestoreOptions = {
+  /** Also restore placeholders the model rewrote: no brackets, another case, inside (), [] or {} (default true). */
+  lenient?: boolean;
+  /**
+   * Also accept a bare name with the C_ dropped ("Person_1" for <C_PERSON_1>) (default true).
+   * Turn it off when the server kept its own <PERSON_n> placeholders (chainaim_restore: false),
+   * since a bare PERSON_1 could then be either.
+   */
+  dropPrefix?: boolean;
+};
+
+/**
+ * Put the original values back. Bracketed <C_...> placeholders are restored as before; with
+ * `lenient` (the default) a form the model rewrote is restored too, but only for names in this
+ * computer's map and only as a whole token. Parentheses stay as the model's prose; <>, [] and {}
+ * around a known name are dropped. The server's own <TYPE_n> is left alone. A <C_...> not in the
+ * map, and a bare lookalike of a type in the map (Person_9), stay as they are and are counted.
+ */
+export function restore(text: string, map: Readonly<Record<string, string>>, options: RestoreOptions = {}): { text: string; unresolved: number } {
+  const lenient = options.lenient !== false;
+  const dropPrefix = options.dropPrefix !== false;
+  const names = Object.keys(map).map((k) => k.replace(/^<\s*|\s*>$/g, "").toUpperCase()).filter((n) => n.startsWith(PREFIX));
+  const parts = [BRACKETED];
+  if (lenient && names.length > 0) {
+    const core = (n: string) => (dropPrefix ? `(?:${PREFIX})?${escapeRegExp(n.slice(PREFIX.length))}` : escapeRegExp(n));
+    const n = names.sort((a, b) => b.length - a.length).map(core).join("|");
+    const types = [...new Set(names.map((x) => x.slice(PREFIX.length).replace(/_\d+$/, "")))].map(escapeRegExp).join("|");
+    parts.push(`\\[\\s*(?<s>${n})\\s*\\]`, `\\{\\s*(?<c>${n})\\s*\\}`, `${BEFORE}(?<w>${n})${AFTER}`, `${BEFORE}(?<l>(?:${PREFIX})?(?:${types})_\\d+)${AFTER}`);
+  }
+  const key = (name: string) => {
+    const upper = name.toUpperCase();
+    return `<${upper.startsWith(PREFIX) ? upper : PREFIX + upper}>`;
+  };
   let unresolved = 0;
-  const out = text.replace(CLIENT_PLACEHOLDER, (whole: string, name: string) => {
-    const value = map[`<${name.toUpperCase()}>`];
-    if (value === undefined) {
-      unresolved++;
-      return whole;
+  const out = text.replace(new RegExp(parts.join("|"), "gi"), (whole: string, ...rest: unknown[]) => {
+    const g = rest[rest.length - 1] as Record<string, string | undefined>;
+    if (g.b !== undefined) {
+      if (!g.b.toUpperCase().startsWith(PREFIX)) return whole; // the server's own placeholder
+      const value = map[`<${g.b.toUpperCase()}>`];
+      if (value === undefined) {
+        unresolved++;
+        return whole;
+      }
+      return value;
     }
-    return value;
+    const found = g.s ?? g.c ?? g.w;
+    if (found !== undefined) {
+      const value = map[key(found)];
+      if (value === undefined) {
+        unresolved++;
+        return whole;
+      }
+      return value;
+    }
+    if (g.l !== undefined) unresolved++;
+    return whole;
   });
   return { text: out, unresolved };
 }

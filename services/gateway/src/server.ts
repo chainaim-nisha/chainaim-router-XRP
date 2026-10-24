@@ -140,6 +140,7 @@ export function createGateway(deps: GatewayDeps, opts: ServerOptions): Server {
     headers["x-chainaim-classifier"] = result.record.classifier ?? "rules";
     headers["x-chainaim-model"] = result.record.served ?? "";
     headers["x-chainaim-restored"] = result.record.restored === false ? "no" : "yes";
+    if (result.record.unresolvedPlaceholders !== undefined) headers["x-chainaim-unresolved"] = String(result.record.unresolvedPlaceholders);
     if (!result.stream) {
       sendJson(res, 200, result.completion, headers);
       return;
