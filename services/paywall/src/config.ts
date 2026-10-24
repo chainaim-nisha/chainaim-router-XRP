@@ -53,6 +53,12 @@ export type PaywallConfig = {
   publicBaseUrl: string | undefined;
   /** USD price per call, e.g. "$0.01"; changeable without a code change. */
   prices: Record<Priced, string>;
+  /**
+   * PAYWALL_PHASE_LOG=on (default off): each payment_settled line also carries
+   * `phases` with capacity_ms, verify_ms, gateway_ms and settle_ms (P14).
+   * Names and whole milliseconds only, never text.
+   */
+  phaseLog?: boolean;
 };
 
 export function loadConfig(env: Record<string, string | undefined>): PaywallConfig {
@@ -106,6 +112,8 @@ export function loadConfig(env: Record<string, string | undefined>): PaywallConf
   const maxTimeoutSeconds = integer("XRPL_MAX_TIMEOUT_SECONDS", DEFAULT_MAX_TIMEOUT_SECONDS);
   if (maxTimeoutSeconds === 0) throw new Error("XRPL_MAX_TIMEOUT_SECONDS must be above zero");
   const gatewayUrl = url("GATEWAY_URL", required("GATEWAY_URL"));
+  const phaseLogValue = value("PAYWALL_PHASE_LOG") ?? "off";
+  if (phaseLogValue !== "on" && phaseLogValue !== "off") throw new Error(`PAYWALL_PHASE_LOG must be on or off, got ${phaseLogValue}`);
   const publicBaseUrl = value("PUBLIC_BASE_URL")?.replace(/\/+$/, "");
   if (publicBaseUrl !== undefined && (!publicBaseUrl.startsWith("https://") || !URL.canParse(publicBaseUrl))) {
     throw new Error("PUBLIC_BASE_URL must be an https URL");
@@ -126,5 +134,6 @@ export function loadConfig(env: Record<string, string | undefined>): PaywallConf
     host: value("HOST") ?? "0.0.0.0",
     publicBaseUrl,
     prices: { scan: price("PRICE_SCAN"), mask: price("PRICE_MASK"), chat: price("PRICE_CHAT") },
+    phaseLog: phaseLogValue === "on",
   };
 }

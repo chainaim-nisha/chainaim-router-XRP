@@ -10,6 +10,7 @@
  * served. The middleware settles only responses below 400, so every refusal
  * is free for the caller.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
@@ -26,7 +27,35 @@ export const MAX_BODY_BYTES = 4 * 1024 * 1024;
 /** Gateway response headers passed back to the caller; everything else is dropped. */
 const PASS_BACK = /^(content-type|retry-after|x-chainaim-[a-z-]+)$/;
 
-export type PaywallDeps = { log?: (line: string) => void; now?: () => number; maxOpenInvoices?: number };
+export type PaywallDeps = {
+  log?: (line: string) => void;
+  now?: () => number;
+  maxOpenInvoices?: number;
+  /** Monotonic milliseconds for the phase log (PAYWALL_PHASE_LOG); performance.now() by default. */
+  clock?: () => number;
+};
+
+/**
+ * Marks taken during one request when the phase log is on (P14). The payment
+ * middleware verifies, then runs the handler (the gateway call), then settles,
+ * so verify = handler start - beforeVerify, gateway = the proxied fetch,
+ * settle = afterSettle - handler end. Only the two hooks already used here are
+ * relied on.
+ */
+type PhaseMarks = { capacityMs?: number; verifyAt?: number; gatewayStart?: number; gatewayEnd?: number };
+
+/** The phases of one settled call, whole milliseconds, or undefined when a mark is missing. */
+export function settledPhases(marks: PhaseMarks, settledAt: number): Record<string, number> | undefined {
+  const { capacityMs, verifyAt, gatewayStart, gatewayEnd } = marks;
+  if (verifyAt === undefined || gatewayStart === undefined || gatewayEnd === undefined) return undefined;
+  const ms = (n: number): number => Math.max(0, Math.round(n));
+  return {
+    ...(capacityMs === undefined ? {} : { capacity_ms: ms(capacityMs) }),
+    verify_ms: ms(gatewayStart - verifyAt),
+    gateway_ms: ms(gatewayEnd - gatewayStart),
+    settle_ms: ms(settledAt - gatewayEnd),
+  };
+}
 
 const SITE_NAME = "PrivacyBuddy";
 const OWNER = "ChainAim";
@@ -66,11 +95,18 @@ function errorBody(c: Context, status: 404 | 413 | 502 | 503, message: string, h
 
 export function createPaywall(config: PaywallConfig, deps: PaywallDeps = {}): Hono {
   const log = deps.log ?? ((line: string) => console.log(line));
+  const clock = deps.clock ?? (() => performance.now());
+  const phaseLog = config.phaseLog === true;
+  const marks = new AsyncLocalStorage<PhaseMarks>();
+  /** The current request's marks, only when the phase log is on. */
+  const mark = (): PhaseMarks | undefined => (phaseLog ? marks.getStore() : undefined);
   const server = new x402ResourceServer(new HTTPFacilitatorClient({ url: config.facilitatorUrl })).register(config.network, new ExactXrplScheme());
   server.registerExtension(bazaarResourceServerExtension as never);
   // A payment is accepted once: a refused call is never settled, so nothing else stops a replay from draining the free-model quota.
   const invoices = new InvoiceBook(config.maxTimeoutSeconds * 1000, deps.now, deps.maxOpenInvoices);
   server.onBeforeVerify(async (ctx) => {
+    const m = mark();
+    if (m) m.verifyAt = clock();
     const invoiceId = (ctx.requirements.extra as { invoiceId?: unknown } | undefined)?.invoiceId;
     if (typeof invoiceId === "string" && invoices.claim(invoiceId)) return;
     return { abort: true, reason: "payment_already_used", message: "this payment was already presented; sign a new one" };
@@ -78,6 +114,8 @@ export function createPaywall(config: PaywallConfig, deps: PaywallDeps = {}): Ho
   // Payment log: one line per settled payment; never a decision id or a body.
   server.onAfterSettle(async (ctx) => {
     const request = (ctx.transportContext as { request?: { method?: string; path?: string } } | undefined)?.request;
+    const m = mark();
+    const phases = m ? settledPhases(m, clock()) : undefined;
     log(
       JSON.stringify({
         ts: new Date().toISOString(),
@@ -88,6 +126,7 @@ export function createPaywall(config: PaywallConfig, deps: PaywallDeps = {}): Ho
         network: ctx.result.network,
         payer: ctx.result.payer ?? null,
         transaction: ctx.result.transaction,
+        ...(phases ? { phases } : {}),
       }),
     );
   });
@@ -105,10 +144,14 @@ export function createPaywall(config: PaywallConfig, deps: PaywallDeps = {}): Ho
     const init: RequestInit = { method: c.req.method, headers, signal };
     if (c.req.method !== "GET" && c.req.method !== "HEAD") init.body = await c.req.arrayBuffer();
     let upstream: Response;
+    const m = mark();
+    if (m) m.gatewayStart = clock();
     try {
       upstream = await fetch(`${config.gatewayUrl}${c.req.path}`, init);
     } catch {
       return errorBody(c, 502, "the gateway did not answer; you were not charged");
+    } finally {
+      if (m) m.gatewayEnd = clock();
     }
     const out = new Headers();
     upstream.headers.forEach((value, name) => {
@@ -118,12 +161,16 @@ export function createPaywall(config: PaywallConfig, deps: PaywallDeps = {}): Ho
   }
 
   const app = new Hono();
+  // One set of marks per request, read by the hooks above through the async context.
+  if (phaseLog) app.use((_c, next) => marks.run({}, () => next()));
   app.use(bodyLimit({ maxSize: MAX_BODY_BYTES, onError: (c) => errorBody(c, 413, `request body exceeds ${MAX_BODY_BYTES} bytes`) }));
 
   // Capacity guard: no price is shown for a chat call that cannot be served now.
   app.use("/v1/chat/completions", async (c, next) => {
     if (c.req.method !== "POST") return next();
     let capacity: { chatAvailable?: unknown; reason?: unknown; retryAfterSec?: unknown };
+    const m = mark();
+    const asked = clock();
     try {
       const r = await fetch(`${config.gatewayUrl}/internal/capacity`, {
         headers: { authorization: `Bearer ${config.gatewayKey}` },
@@ -133,6 +180,7 @@ export function createPaywall(config: PaywallConfig, deps: PaywallDeps = {}): Ho
     } catch {
       capacity = { reason: "gateway unreachable" };
     }
+    if (m) m.capacityMs = clock() - asked;
     if (capacity.chatAvailable === true) return next();
     const retryAfter = typeof capacity.retryAfterSec === "number" && capacity.retryAfterSec > 0 ? String(Math.ceil(capacity.retryAfterSec)) : "60";
     const reason = typeof capacity.reason === "string" ? capacity.reason : "no capacity";

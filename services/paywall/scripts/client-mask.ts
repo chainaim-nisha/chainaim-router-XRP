@@ -159,16 +159,25 @@ export function maskText(text: string, options: MaskOptions = {}): Masked {
   return mask(text, detect(text, options));
 }
 
-/** <C_TYPE_n>, in any case, with spaces allowed inside the brackets. The server's own <TYPE_n> is left alone. */
-const CLIENT_PLACEHOLDER = /<\s*(C_[A-Za-z][A-Za-z_]*?_\d+)\s*>/gi;
+/**
+ * <C_TYPE_n>, in any case, with spaces allowed inside the brackets; or a bare
+ * C_TYPE_n standing as a word of its own, which a model sometimes writes after
+ * dropping the brackets (Nemotron wrote "**C_PERSON_1**" on 2026-10-24). The
+ * server's own <TYPE_n> is left alone.
+ */
+const CLIENT_PLACEHOLDER = /<\s*(C_[A-Za-z][A-Za-z_]*?_\d+)\s*>|(?<![A-Za-z0-9_])(C_[A-Za-z][A-Za-z_]*?_\d+)(?![A-Za-z0-9_])/gi;
 
-/** Put the original values back; a placeholder not in the map stays as it is and is counted. */
+/**
+ * Put the original values back. A bracketed placeholder not in the map stays
+ * as it is and is counted; a bare one is put back only when it is in the map
+ * (it could be ordinary text otherwise), and is otherwise left uncounted.
+ */
 export function restore(text: string, map: Readonly<Record<string, string>>): { text: string; unresolved: number } {
   let unresolved = 0;
-  const out = text.replace(CLIENT_PLACEHOLDER, (whole: string, name: string) => {
-    const value = map[`<${name.toUpperCase()}>`];
+  const out = text.replace(CLIENT_PLACEHOLDER, (whole: string, bracketed: string | undefined, bare: string | undefined) => {
+    const value = map[`<${(bracketed ?? bare)!.toUpperCase()}>`];
     if (value === undefined) {
-      unresolved++;
+      if (bracketed !== undefined) unresolved++;
       return whole;
     }
     return value;

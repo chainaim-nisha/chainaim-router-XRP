@@ -52,6 +52,16 @@ describe("client-mask", () => {
     assert.equal(r.unresolved, 1);
   });
 
+  it("restores a placeholder whose brackets the model dropped, only when it is one of this machine's", () => {
+    const { map } = maskText(PRESCRIPTION);
+    // As Nemotron wrote it on 2026-10-24: bold, no angle brackets.
+    const r = restore("- **C_PERSON_1**\n  - next visit 2026-11-07; the other one (C_PERSON_3) in December.", map);
+    assert.equal(r.text, "- **Jane Roe**\n  - next visit 2026-11-07; the other one (C_PERSON_3) in December.");
+    assert.equal(r.unresolved, 0, "a bare token this machine did not make is left alone and not counted");
+    const lookalikes = "C_PERSON_1x XC_PERSON_1 C_PERSON_1_2 PERSON_1";
+    assert.equal(restore(lookalikes, map).text, lookalikes, "part of a longer word is not a placeholder");
+  });
+
   it("does not mask a number without a context word, or a card that fails the Luhn check", () => {
     assert.deepEqual(detect("Invoice 991122 for 250 rupees"), []);
     assert.deepEqual(detect("Order 4111 1111 1111 1112").filter((f) => f.type === "CREDIT_CARD"), []);

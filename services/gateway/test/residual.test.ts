@@ -27,6 +27,15 @@ describe("residualHits", () => {
     ]) assert.deepEqual(kinds(t), [], t);
   });
 
+  it("does not join a title at a line's end to the next line once a placeholder is removed", () => {
+    const note = "Patient Name: <C_PERSON_1>\nMRN <C_MEDICAL_RECORD_1>\nAadhaar <C_IN_AADHAAR_1>\nAttending: Dr. <C_PERSON_2>\n\nDiagnosis: type 2 diabetes, newly started on insulin.";
+    assert.deepEqual(kinds(note), [], "the masked discharge note is not refused");
+    assert.deepEqual(kinds("Dr. <PERSON_1>\nDischarge medicines:"), []);
+    // Still refused: a name on the same line as the title.
+    assert.deepEqual(kinds("Dr. <C_PERSON_1> Grant"), ["titled_name"], "a surname left after a removed first name");
+    assert.deepEqual(kinds("Dr.\tGrant"), ["titled_name"]);
+  });
+
   it("counts per kind across texts and never returns values", () => {
     const hits = residualHits(["acct 991200345678", "acct 991200345679 and a@b.example"], DEFAULT_RESIDUAL);
     assert.deepEqual(hits, [{ kind: "digits", count: 2 }, { kind: "email", count: 1 }]);

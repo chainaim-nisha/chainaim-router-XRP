@@ -42,8 +42,10 @@ const CHECKS: Record<ResidualKind, (text: string, minDigits: number) => number> 
   // +1 415 555 0132, +91 (98201) 44907
   intl_phone: (t) => countRuns(t, /\+\d[\d ()-]{6,}\d/g, 8),
   email: (t) => [...t.matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g)].length,
-  // MR TL ZENGENI, Mrs Danga, Dr. Grant, Shri Ravi: a title followed by a capitalised word that is not a placeholder
-  titled_name: (t) => [...t.matchAll(/\b(?:Mr|MR|Mrs|MRS|Miss|MISS|Dr|DR|Shri|SHRI|Smt|SMT|Ms\.|MS\.)\.?\s+[A-Z][A-Za-z'-]*/g)].length,
+  // MR TL ZENGENI, Mrs Danga, Dr. Grant, Shri Ravi: a title followed by a capitalised word that is not a placeholder.
+  // Only spaces or tabs may separate them, never a line break: "Attending: Dr. <C_PERSON_2>" at a line's end must not be
+  // joined to the next line's heading ("Diagnosis:") once the placeholder is removed.
+  titled_name: (t) => [...t.matchAll(/\b(?:Mr|MR|Mrs|MRS|Miss|MISS|Dr|DR|Shri|SHRI|Smt|SMT|Ms\.|MS\.)\.?[ \t]+[A-Z][A-Za-z'-]*/g)].length,
 };
 
 /** Kinds and counts of what looks like personal data in already-masked texts; empty when the policy is off or nothing is found. */
